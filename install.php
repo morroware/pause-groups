@@ -60,10 +60,22 @@ if ($isCli) {
     // Step 1: Ensure data directory
     $dataDir = dirname(DB_PATH);
     if (!is_dir($dataDir)) {
-        mkdir($dataDir, 0770, true);
+        if (!@mkdir($dataDir, 0770, true)) {
+            echo "[ERROR] Could not create data directory: $dataDir\n";
+            echo "        Fix: sudo mkdir -p $dataDir && sudo chown www-data:www-data $dataDir && sudo chmod 770 $dataDir\n";
+            exit(1);
+        }
         echo "[OK] Created data directory: $dataDir\n";
     } else {
         echo "[OK] Data directory exists: $dataDir\n";
+    }
+
+    // Verify the data directory is writable
+    if (!is_writable($dataDir)) {
+        $currentUser = posix_getpwuid(posix_geteuid())['name'] ?? get_current_user();
+        echo "[ERROR] Data directory is not writable by '$currentUser': $dataDir\n";
+        echo "        Fix: sudo chown $currentUser:$currentUser $dataDir && sudo chmod 770 $dataDir\n";
+        exit(1);
     }
 
     // Step 2: Initialize database
