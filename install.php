@@ -6,11 +6,50 @@
  * Usage (Web):  Navigate to /install.php in browser
  */
 
+$isCli = (php_sapi_name() === 'cli');
+
+// ─── Prerequisite Checks ────────────────────────────────────────────────────
+$requiredExtensions = [
+    'sqlite3' => 'sudo apt-get install php-sqlite3',
+    'openssl' => 'sudo apt-get install php-openssl (often included by default)',
+    'mbstring' => 'sudo apt-get install php-mbstring',
+];
+
+$missing = [];
+foreach ($requiredExtensions as $ext => $installHint) {
+    if (!extension_loaded($ext)) {
+        $missing[$ext] = $installHint;
+    }
+}
+
+if ($missing) {
+    if ($isCli) {
+        echo "[ERROR] Missing required PHP extension(s):\n\n";
+        foreach ($missing as $ext => $hint) {
+            echo "  - $ext\n    Install: $hint\n";
+        }
+        echo "\nAfter installing, restart your web server / PHP-FPM and re-run this script.\n";
+        exit(1);
+    } else {
+        header('Content-Type: text/html; charset=utf-8');
+        echo '<!DOCTYPE html><html><head><title>Setup Error</title>';
+        echo '<style>body{font-family:sans-serif;background:#0b0e14;color:#c8ccd4;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}';
+        echo '.card{background:#1a1d27;border:1px solid #2a2d3a;border-radius:12px;padding:2.5rem;max-width:520px;width:100%}';
+        echo 'h1{color:#e5534b;font-size:1.3rem;margin-bottom:1rem}code{background:#0f1117;padding:0.2rem 0.5rem;border-radius:4px;font-size:0.85rem}</style>';
+        echo '</head><body><div class="card"><h1>Missing PHP Extensions</h1>';
+        echo '<p>The following required PHP extensions are not installed:</p><ul>';
+        foreach ($missing as $ext => $hint) {
+            echo '<li><strong>' . htmlspecialchars($ext) . '</strong> &mdash; <code>' . htmlspecialchars($hint) . '</code></li>';
+        }
+        echo '</ul><p style="margin-top:1rem;color:#7a8194;">After installing, restart your web server / PHP-FPM and reload this page.</p>';
+        echo '</div></body></html>';
+        exit(1);
+    }
+}
+
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/lib/db.php';
 require_once __DIR__ . '/lib/crypto.php';
-
-$isCli = (php_sapi_name() === 'cli');
 
 // ─── CLI Mode ───────────────────────────────────────────────────────────────
 if ($isCli) {
