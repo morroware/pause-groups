@@ -1,0 +1,268 @@
+<?php
+/**
+ * SQLite database singleton with schema initialization and query helpers.
+ */
+
+require_once __DIR__ . '/../config.php';
+
+class DB {
+    private static ?SQLite3 $instance = null;
+
+    public static function getInstance(): SQLite3 {
+        if (self::$instance === null) {
+            $dir = dirname(DB_PATH);
+            if (!is_dir($dir)) {
+                mkdir($dir, 0770, true);
+            }
+
+            self::$instance = new SQLite3(DB_PATH);
+            self::$instance->enableExceptions(true);
+            self::$instance->busyTimeout(5000);
+            self::$instance->exec('PRAGMA journal_mode=WAL');
+            self::$instance->exec('PRAGMA foreign_keys=ON');
+            self::$instance->exec('PRAGMA synchronous=NORMAL');
+
+            self::initSchema();
+        }
+        return self::$instance;
+    }
+
+    private static function initSchema(): void {
+        $db = self::$instance;
+
+        $db->exec('CREATE TABLE IF NOT EXISTS admin_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime(\'now\')),
+            updated_at TEXT NOT NULL DEFAULT (datetime(\'now\'))
+        )');
+
+        $db->exec('CREATE TABLE IF NOT EXISTS api_config (
+            key TEXT PRIMARY KEY,
+            value TEXT,
+            encrypted INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT (datetime(\'now\'))
+        )');
+
+        $db->exec('CREATE TABLE IF NOT EXISTS pause_groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            description TEXT DEFAULT \'\',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime(\'now\')),
+            updated_at TEXT NOT NULL DEFAULT (datetime(\'now\'))
+        )');
+
+        $db->exec('CREATE TABLE IF NOT EXISTS pause_group_categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pause_group_id INTEGER NOT NULL,
+            category_id INTEGER NOT NULL,
+            category_name TEXT NOT NULL DEFAULT \'\',
+            FOREIGN KEY (pause_group_id) REFERENCES pause_groups(id) ON DELETE CASCADE
+        )');
+        $db->exec('CREATE INDEX IF NOT EXISTS idx_pgc_group ON pause_group_categories(pause_group_id)');
+
+        $db->exec('CREATE TABLE IF NOT EXISTS pause_group_games (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pause_group_id INTEGER NOT NULL,
+            game_id TEXT NOT NULL,
+            game_name TEXT NOT NULL DEFAULT \'\',
+            FOREIGN KEY (pause_group_id) REFERENCES pause_groups(id) ON DELETE CASCADE
+        )');
+        $db->exec('CREATE INDEX IF NOT EXISTS idx_pgg_group ON pause_group_games(pause_group_id)');
+
+        $db->exec('CREATE TABLE IF NOT EXISTS schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pause_group_id INTEGER NOT NULL,
+            day_of_week INTEGER NOT NULL,
+            start_time TEXT NOT NULL,
+            end_time TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime(\'now\')),
+            updated_at TEXT NOT NULL DEFAULT (datetime(\'now\')),
+            FOREIGN KEY (pause_group_id) REFERENCES pause_groups(id) ON DELETE CASCADE
+        )');
+        $db->exec('CREATE INDEX IF NOT EXISTS idx_sched_group ON schedules(pause_group_id)');
+        $db->exec('CREATE INDEX IF NOT EXISTS idx_sched_day ON schedules(day_of_week)');
+
+        $db->exec('CREATE TABLE IF NOT EXISTS schedule_overrides (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pause_group_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            action TEXT NOT NULL,
+            start_datetime TEXT NOT NULL,
+            end_datetime TEXT NOT NULL,
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime(\'now\')),
+            FOREIGN KEY (pause_group_id) REFERENCES pause_groups(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES admin_users(id)
+        )');
+        $db->exec('CREATE INDEX IF NOT EXISTS idx_override_group ON schedule_overrides(pause_group_id)');
+        $db->exec('CREATE INDEX IF NOT EXISTS idx_override_dates ON schedule_overrides(start_datetime, end_datetime)');
+
+        $db->exec('CREATE TABLE IF NOT EXISTS action_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL DEFAULT (datetime(\'now\')),
+            source TEXT NOT NULL,
+            action TEXT NOT NULL,
+            pause_group_id INTEGER,
+            game_id TEXT,
+            game_name TEXT,
+            details TEXT,
+            success INTEGER NOT NULL DEFAULT 1,
+            error_message TEXT,
+            FOREIGN KEY (pause_group_id) REFERENCES pause_groups(id) ON DELETE SET NULL
+        )');
+        $db->exec('CREATE INDEX IF NOT EXISTS idx_log_timestamp ON action_log(timestamp)');
+        $db->exec('CREATE INDEX IF NOT EXISTS idx_log_source ON action_log(source)');
+        $db->exec('CREATE INDEX IF NOT EXISTS idx_log_group ON action_log(pause_group_id)');
+
+        $db->exec('CREATE TABLE IF NOT EXISTS scheduled_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pause_group_id INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            scheduled_time TEXT NOT NULL,
+            scheduled_date TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT \'schedule\',
+            at_job_id TEXT,
+            executed INTEGER NOT NULL DEFAULT 0,
+            executed_at TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime(\'now\')),
+            FOREIGN KEY (pause_group_id) REFERENCES pause_groups(id) ON DELETE CASCADE
+        )');
+        $db->exec('CREATE INDEX IF NOT EXISTS idx_sa_date ON scheduled_actions(scheduled_date)');
+        $db->exec('CREATE INDEX IF NOT EXISTS idx_sa_executed ON scheduled_actions(executed)');
+
+        $db->exec('CREATE TABLE IF NOT EXISTS game_state_cache (
+            game_id TEXT PRIMARY KEY,
+            game_name TEXT NOT NULL,
+            operation_status TEXT NOT NULL DEFAULT \'enabled\',
+            categories TEXT DEFAULT \'[]\',
+            last_synced_at TEXT NOT NULL DEFAULT (datetime(\'now\'))
+        )');
+    }
+
+    /**
+     * Execute a parameterized SELECT query, return all rows as associative arrays.
+     */
+    public static function query(string $sql, array $params = []): array {
+        $db = self::getInstance();
+        $stmt = $db->prepare($sql);
+        self::bindParams($stmt, $params);
+        $result = $stmt->execute();
+
+        $rows = [];
+        while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+            $rows[] = $row;
+        }
+        $result->finalize();
+        $stmt->close();
+        return $rows;
+    }
+
+    /**
+     * Execute a parameterized SELECT query, return first row or null.
+     */
+    public static function queryOne(string $sql, array $params = []): ?array {
+        $db = self::getInstance();
+        $stmt = $db->prepare($sql);
+        self::bindParams($stmt, $params);
+        $result = $stmt->execute();
+        $row = $result->fetchArray(SQLITE3_ASSOC);
+        $result->finalize();
+        $stmt->close();
+        return $row ?: null;
+    }
+
+    /**
+     * Execute a parameterized INSERT/UPDATE/DELETE query, return affected row count.
+     */
+    public static function execute(string $sql, array $params = []): int {
+        $db = self::getInstance();
+        $stmt = $db->prepare($sql);
+        self::bindParams($stmt, $params);
+        $stmt->execute();
+        $changes = $db->changes();
+        $stmt->close();
+        return $changes;
+    }
+
+    /**
+     * Return the last inserted row ID.
+     */
+    public static function lastInsertId(): int {
+        return (int) self::getInstance()->lastInsertRowID();
+    }
+
+    /**
+     * Bind parameters to a prepared statement.
+     * Supports positional (:p0, :p1, ...) binding from an indexed array.
+     */
+    private static function bindParams(SQLite3Stmt $stmt, array $params): void {
+        foreach ($params as $i => $value) {
+            $key = ':p' . $i;
+            if ($value === null) {
+                $stmt->bindValue($key, null, SQLITE3_NULL);
+            } elseif (is_int($value)) {
+                $stmt->bindValue($key, $value, SQLITE3_INTEGER);
+            } elseif (is_float($value)) {
+                $stmt->bindValue($key, $value, SQLITE3_FLOAT);
+            } else {
+                $stmt->bindValue($key, (string) $value, SQLITE3_TEXT);
+            }
+        }
+    }
+
+    /**
+     * Build a parameterized WHERE clause from conditions.
+     * Returns [$whereClause, $params] where params use :p0, :p1, ... keys.
+     */
+    public static function buildWhere(array $conditions, int $startIdx = 0): array {
+        $clauses = [];
+        $params = [];
+        $idx = $startIdx;
+        foreach ($conditions as $column => $value) {
+            $clauses[] = "$column = :p$idx";
+            $params[$idx] = $value;
+            $idx++;
+        }
+        $where = $clauses ? 'WHERE ' . implode(' AND ', $clauses) : '';
+        return [$where, $params];
+    }
+
+    /**
+     * Get a config value from the api_config table.
+     */
+    public static function getConfig(string $key): ?string {
+        $row = self::queryOne(
+            'SELECT value, encrypted FROM api_config WHERE key = :p0',
+            [$key]
+        );
+        if (!$row) {
+            return null;
+        }
+        if ($row['encrypted'] && class_exists('Crypto')) {
+            return Crypto::decrypt($row['value']);
+        }
+        return $row['value'];
+    }
+
+    /**
+     * Set a config value in the api_config table.
+     */
+    public static function setConfig(string $key, ?string $value, bool $encrypt = false): void {
+        $storedValue = $value;
+        if ($encrypt && $value !== null && $value !== '' && class_exists('Crypto')) {
+            $storedValue = Crypto::encrypt($value);
+        }
+        self::execute(
+            'INSERT INTO api_config (key, value, encrypted, updated_at)
+             VALUES (:p0, :p1, :p2, datetime(\'now\'))
+             ON CONFLICT(key) DO UPDATE SET value = :p1, encrypted = :p2, updated_at = datetime(\'now\')',
+            [$key, $storedValue, $encrypt ? 1 : 0]
+        );
+    }
+}
