@@ -35,14 +35,15 @@ This project builds a self-contained web application that automates pausing and 
 | Backend | Plain PHP (no framework) | Easy to deploy, runs anywhere PHP is available |
 | Frontend | Vanilla JS/CSS/HTML | No build step, no dependencies |
 | Database | SQLite | Zero config, single file, no external DB server |
-| Scheduling | System cron (every minute) | Most reliable, standard on all Linux/Mac servers |
+| Scheduling | Daily cron + `at` command | Cron plans the day once; `at` fires actions at exact times |
 | Admin Auth | Username/password with individual accounts | Supports multiple admins with audit trail |
 
 ### Requirements
 
 - PHP 7.4+ with extensions: `sqlite3`, `curl`, `json`, `openssl`, `mbstring`
 - Web server (Apache with mod_rewrite, or Nginx)
-- Cron access
+- Cron access (single daily job)
+- `at` command / `atd` daemon (for precise timed action execution)
 - Network connectivity to the CenterEdge API
 
 ---
@@ -53,7 +54,8 @@ This project builds a self-contained web application that automates pausing and 
 pause-groups/
 ├── config.php                    # Encryption key, DB path, timezone defaults
 ├── index.php                     # Main router (serves SPA shell + dispatches API requests)
-├── cron.php                      # Cron job entry point (runs every minute)
+├── cron.php                      # Daily cron: plans the day's actions + queues via `at`
+├── run_action.php                # Executes a single scheduled action (called by `at`)
 ├── install.php                   # One-time guided setup (CLI or browser)
 ├── .htaccess                     # Apache URL rewriting → index.php
 │
@@ -63,7 +65,7 @@ pause-groups/
 │   ├── centeredge_client.php     # CenterEdge API client (auth, games, categories, patch)
 │   ├── crypto.php                # AES-256-CBC encrypt/decrypt for credentials at rest
 │   ├── csrf.php                  # CSRF token generation and validation
-│   ├── scheduler.php             # Core scheduling engine (the heart of the system)
+│   ├── scheduler.php             # Core engine: plan day, queue `at` jobs, execute actions
 │   └── validator.php             # Input validation/sanitization helpers
 │
 ├── api/                          # JSON API endpoint handlers
@@ -214,7 +216,24 @@ Outside all active schedule windows, games revert to `enabled`.
 | `success` | INTEGER | 1=success, 0=error |
 | `error_message` | TEXT | Error details if failed |
 
-### 3.9 `game_state_cache` — Last known state of each game
+### 3.9 `scheduled_actions` — Queued actions for today (planned by daily cron)
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER PK | Auto-increment |
+| `pause_group_id` | INTEGER FK | Which group this action is for |
+| `action` | TEXT | `pause` or `unpause` |
+| `scheduled_time` | TEXT | HH:MM — when this action should fire |
+| `scheduled_date` | TEXT | YYYY-MM-DD — which day |
+| `source` | TEXT | `schedule`, `override`, or `replan` |
+| `at_job_id` | TEXT | `at` job identifier for cancellation |
+| `executed` | INTEGER | 0=pending, 1=done, 2=failed |
+| `executed_at` | TEXT | When it actually ran |
+| `created_at` | TEXT | UTC datetime |
+
+This table is rebuilt daily by `cron.php`. Each row maps to one `at` job. When an admin creates an override or changes a schedule, the remaining unexecuted actions for today are cleared, replanned, and requeued.
+
+### 3.10 `game_state_cache` — Last known state of each game
 
 | Column | Type | Notes |
 |---|---|---|
@@ -233,20 +252,51 @@ Critical for:
 
 ## 4. Core Logic: The Scheduling Engine
 
-### 4.1 How the Cron Job Works (`cron.php` + `lib/scheduler.php`)
+### 4.1 Two-Part Architecture: Daily Planner + Timed Execution
 
-The cron job runs every minute and executes `Scheduler::execute()`:
+The scheduling system uses a **"plan the day"** model rather than frequent polling:
 
+**Part 1 — Daily Cron (`cron.php`)** runs once per day (e.g., midnight):
 ```
-1. Acquire exclusive file lock (prevent overlapping runs)
-2. Load timezone from config → date_default_timezone_set()
+1. Acquire exclusive file lock
+2. Load timezone from config
 3. Sync game states: GET /games → update game_state_cache
-4. Compute desired states for all managed games
-5. Compare desired vs. current states
-6. Batch PATCH /games for any needed changes
-7. Log all actions to action_log
-8. Release lock
+4. Compute all transition points for today:
+   - Which groups need to be paused and when (from schedules table, filtered by today's day_of_week)
+   - Which groups need to be unpaused and when
+   - Any overrides active today (by date/time range)
+5. Write planned actions to scheduled_actions table
+6. Clear any previously queued `at` jobs (tagged with app identifier)
+7. Queue each action via `at`:
+   echo "php /path/run_action.php --id 42" | at 09:00
+   echo "php /path/run_action.php --id 43" | at 17:00
+8. Log the day plan to action_log
+9. Release lock
 ```
+
+**Part 2 — Timed Execution (`run_action.php`)** fires at exact scheduled times via `at`:
+```
+1. Load the scheduled action by ID from scheduled_actions table
+2. Sync game states from CenterEdge (fresh check)
+3. Skip any outOfService games
+4. Call PATCH /games for the required state changes
+5. Mark the action as executed in scheduled_actions
+6. Log results to action_log
+```
+
+**Part 3 — Immediate Execution (admin UI actions)**:
+When an admin creates an override, manually pauses/unpauses, or changes schedules:
+```
+1. Save the change to the database
+2. Immediately execute Scheduler::executeAction() for the affected games
+3. Replan remaining actions for today (clear + requeue `at` jobs)
+```
+
+This gives you:
+- **Precise timing** — actions fire at the exact scheduled time
+- **Minimal API traffic** — only calls CenterEdge at transition points, not every few minutes
+- **Instant overrides** — admin actions take effect immediately, not at next poll
+- **Single daily cron** — no frequent cron jobs needed
 
 ### 4.2 Priority / Precedence Rules
 
@@ -271,35 +321,69 @@ This is the safe default for an entertainment venue — it's better to accidenta
 ### 4.4 State Change Detection
 
 The scheduler avoids redundant API calls:
-- Each run syncs the cache from CenterEdge first
+- Each action execution syncs the cache from CenterEdge first (fresh state check)
 - Only games that need a DIFFERENT status than their current one are included in the PATCH
 - If nothing needs to change, no API call is made
-- This keeps API traffic minimal even running every minute
+- API calls only happen at transition points (typically 2-4 per day), not on a polling loop
 
-### 4.5 `computeDesiredStates()` Pseudocode
+### 4.5 `planDay()` Pseudocode — How the Daily Cron Plans Actions
 
 ```
+Input: target_date (today)
+Output: list of scheduled_actions to queue via `at`
+
+actions = []
+today_dow = day_of_week(target_date)  // 0=Sun..6=Sat
+
 For each active pause group:
-    Resolve group → list of game IDs (from categories + individual games)
+    // Check for overrides active on this date
+    overrides = SELECT FROM schedule_overrides
+        WHERE pause_group_id = group.id
+          AND DATE(start_datetime) <= target_date
+          AND DATE(end_datetime) >= target_date
 
-    Check for active override:
-        SELECT FROM schedule_overrides
-        WHERE pause_group_id = ? AND start_datetime <= now AND end_datetime > now
-        ORDER BY created_at DESC LIMIT 1
+    // Get today's recurring schedules
+    schedules = SELECT FROM schedules
+        WHERE pause_group_id = group.id
+          AND day_of_week = today_dow
+          AND is_active = 1
 
-    If override exists:
-        groupAction = override.action ('pause' or 'unpause')
-    Else check for active schedule:
-        SELECT FROM schedules
-        WHERE pause_group_id = ? AND day_of_week = today AND start_time <= now_time AND end_time > now_time AND is_active = 1
+    // Build transition points for this group:
+    For each schedule:
+        actions.add(time=schedule.start_time, group=group.id, action='pause', source='schedule')
+        actions.add(time=schedule.end_time, group=group.id, action='unpause', source='schedule')
 
-        If schedule exists: groupAction = 'pause'
-        Else: groupAction = 'unpause' (default: enabled)
+    For each override:
+        // Override transitions may replace schedule transitions
+        if override starts today:
+            actions.add(time=TIME(override.start_datetime), group=group.id, action=override.action, source='override')
+        if override ends today:
+            // Revert to what the schedule says at that point
+            actions.add(time=TIME(override.end_datetime), group=group.id, action=reverse(override.action), source='override')
 
-    For each game in group:
-        If game is outOfService → skip
-        If game already marked 'paused' by another group → keep paused (conflict resolution)
-        Else set desired state based on groupAction
+// Sort all actions by time
+// Remove duplicate/conflicting actions (override wins over schedule at same time)
+// Filter out actions whose time has already passed today
+// Write to scheduled_actions table
+// Queue each via: echo "php run_action.php --id {action.id}" | at {action.time}
+```
+
+### 4.6 `executeAction()` Pseudocode — How Each Timed Action Runs
+
+```
+Input: scheduled_action_id
+1. Load action from scheduled_actions table
+2. Sync game states from CenterEdge API (fresh check)
+3. Resolve group → game IDs (categories + individual games)
+4. For each game:
+   - If outOfService → skip, log
+   - If already in desired state → skip
+   - Else add to change batch
+5. PATCH /games with change batch
+6. Update game_state_cache
+7. Mark action as executed in scheduled_actions
+8. Log all results to action_log
+9. Check for any missed earlier actions → execute them too
 ```
 
 ---
@@ -411,8 +495,8 @@ The frontend is a single-page application using hash-based routing. No build too
 | **XSS** | Frontend uses `textContent` (not `innerHTML`) for user-generated content |
 | **Credentials at rest** | API password, API key, and bearer token stored AES-256-CBC encrypted in DB |
 | **Config file exposure** | `config.php` should be chmod 640; `data/` directory protected by .htaccess |
-| **Cron abuse** | `cron.php` checks `php_sapi_name() !== 'cli'` and rejects web requests |
-| **Concurrent cron** | File locking (`flock` with `LOCK_NB`) prevents overlapping executions |
+| **CLI-only scripts** | `cron.php` and `run_action.php` check `php_sapi_name() !== 'cli'` and reject web requests |
+| **Concurrent execution** | File locking (`flock` with `LOCK_NB`) on action execution prevents overlapping state changes |
 | **Brute force login** | `sleep(1)` on failed login attempts |
 
 ---
@@ -436,11 +520,16 @@ chmod 640 /var/www/pause-groups/config.php
 php /var/www/pause-groups/install.php
 # Or navigate to http://yourserver/pause-groups/install.php in a browser
 
-# 5. Configure cron (run scheduler every minute)
-crontab -e
-# Add: * * * * * /usr/bin/php /var/www/pause-groups/cron.php >> /var/www/pause-groups/data/cron.log 2>&1
+# 5. Ensure atd is running (for timed action execution)
+sudo systemctl enable atd
+sudo systemctl start atd
 
-# 6. Configure web server URL rewriting
+# 6. Configure daily cron (plans the day's actions at midnight)
+crontab -e
+# Add: 0 0 * * * /usr/bin/php /var/www/pause-groups/cron.php >> /var/www/pause-groups/data/cron.log 2>&1
+# Run once manually to plan today: php /var/www/pause-groups/cron.php
+
+# 7. Configure web server URL rewriting
 # Apache: .htaccess is included (needs mod_rewrite + AllowOverride)
 # Nginx: see example config below
 ```
@@ -485,20 +574,21 @@ location /pause-groups {
 12. `api/overrides.php` — Override CRUD
 
 ### Phase 4 — Scheduling Engine
-13. `lib/scheduler.php` — Core scheduling logic
-14. `cron.php` — Cron entry point with file locking
+13. `lib/scheduler.php` — Core scheduling logic (day planning + action execution)
+14. `cron.php` — Daily cron: plans the day, queues `at` jobs
+15. `run_action.php` — Single action executor (called by `at` at scheduled times)
 
 ### Phase 5 — Router + Frontend
-15. `index.php` — Main router
-16. `.htaccess` + `data/.htaccess` — Web server config
-17. `public/css/style.css` — All styles
-18. Frontend JS modules (api → app → login → dashboard → groups → schedules → overrides → logs → settings)
+16. `index.php` — Main router
+17. `.htaccess` + `data/.htaccess` — Web server config
+18. `public/css/style.css` — All styles
+19. Frontend JS modules (api → app → login → dashboard → groups → schedules → overrides → logs → settings)
 
 ### Phase 6 — Setup + Polish
-19. `install.php` — Guided first-run setup
-20. `api/logs.php` — Action log API
-21. `api/users.php` — Admin user management
-22. `api/auth.php` — Auth API endpoints
+20. `install.php` — Guided first-run setup
+21. `api/logs.php` — Action log API
+22. `api/users.php` — Admin user management
+23. `api/auth.php` — Auth API endpoints
 
 ---
 
@@ -520,10 +610,13 @@ The `paused` state wins (conservative). If any active group says a game should b
 For this PoC, individual schedules cannot span midnight (e.g., 22:00 to 06:00 on a single entry). Instead, create two schedule entries: 22:00-23:59 on one day and 00:00-06:00 on the next. This is clearly documented in the UI. A future enhancement could add native overnight schedule support.
 
 ### Network failures
-All HTTP requests have a 30-second timeout. Failures are caught, logged to `action_log`, and the cron run continues. No game states are changed if the API is unreachable.
+All HTTP requests have a 30-second timeout. Failures are caught, logged to `action_log`, and the action is marked as failed in `scheduled_actions`. A failed action can be retried from the admin UI. No game states are changed if the API is unreachable.
 
-### Concurrent cron execution
-File locking ensures only one cron instance runs at a time. If a previous run is still executing (e.g., slow API response), the new run logs "already running" and exits cleanly.
+### `at` job management
+Each daily plan clears previously queued `at` jobs (tagged with the app name) before scheduling new ones. When an admin creates an override or modifies schedules mid-day, the system replans: cancels remaining unexecuted `at` jobs, recomputes the rest of today's transition points, and queues new `at` jobs. The `scheduled_actions` table tracks each job's state so nothing gets lost.
+
+### Server restart / missed `at` jobs
+If the server restarts and `at` jobs are lost, the daily cron at midnight replans everything. If an admin notices games are in the wrong state mid-day, the "Sync & Replan" button in the dashboard forces an immediate replan. As a safety net, each `run_action.php` execution also checks if any earlier actions were missed and executes them.
 
 ### First run with no configuration
 The database auto-creates tables on first access. If API credentials are not configured, the CenterEdge client throws an error that is caught and logged. The web UI redirects to the settings page. The `install.php` script provides guided setup.
@@ -538,12 +631,13 @@ The database auto-creates tables on first access. If API credentials are not con
 | 2 | Login via browser | Session persists, CSRF token required on mutations |
 | 3 | Settings → "Test Connection" | Games and categories load from CenterEdge |
 | 4 | Create a pause group with a category | Games from that category are listed as members |
-| 5 | Create schedule for "now" → run `php cron.php` | Games are paused; action log shows entries |
-| 6 | Create "unpause" override during active schedule → run cron | Games are unpaused despite schedule |
-| 7 | Set a game to outOfService in CenterEdge → run cron | Game is skipped in the log |
-| 8 | Delete cached bearer_token from DB → run cron | Re-authenticates automatically |
-| 9 | Run two `php cron.php` instances simultaneously | Second exits with "already running" |
-| 10 | Delete an override → run cron | Schedule takes effect again normally |
+| 5 | Create schedule for today → run `php cron.php` | `at` jobs are queued; `atq` shows them |
+| 6 | Wait for scheduled time to pass | `run_action.php` fires, games are paused, action_log updated |
+| 7 | Create "unpause" override → verify immediate execution | Games unpause instantly, `at` jobs replanned |
+| 8 | Set a game to outOfService in CenterEdge → trigger action | Game is skipped in the log |
+| 9 | Delete cached bearer_token from DB → trigger action | Re-authenticates automatically |
+| 10 | Reboot server, then run `php cron.php` | Missed actions detected and executed, day replanned |
+| 11 | Delete an override mid-day | Remaining `at` jobs replanned, schedule takes effect |
 
 ---
 
