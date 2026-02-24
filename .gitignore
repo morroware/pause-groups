@@ -1,0 +1,4 @@
+data/*.db
+data/*.lock
+data/*.log
+*.log

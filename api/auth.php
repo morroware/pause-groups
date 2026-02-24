@@ -1,0 +1,64 @@
+<?php
+/**
+ * API: Authentication endpoints.
+ * POST /api/auth/login  — Login, return user + CSRF token
+ * POST /api/auth/logout — Destroy session
+ * GET  /api/auth/status — Check session status
+ */
+
+require_once __DIR__ . '/../lib/validator.php';
+
+function handleAuth(string $method, array $parts, ?array $input): void {
+    $action = $parts[0] ?? '';
+
+    switch ($action) {
+        case 'login':
+            if ($method !== 'POST') {
+                http_response_code(405);
+                echo json_encode(['error' => 'Method not allowed']);
+                return;
+            }
+            $username = Validator::requireString($input ?? [], 'username');
+            $password = Validator::requireString($input ?? [], 'password');
+
+            $user = Auth::login($username, $password);
+            if ($user) {
+                echo json_encode([
+                    'user'       => $user,
+                    'csrf_token' => CSRF::getToken(),
+                ]);
+            } else {
+                http_response_code(401);
+                echo json_encode(['error' => 'Invalid username or password.']);
+            }
+            break;
+
+        case 'logout':
+            if ($method !== 'POST') {
+                http_response_code(405);
+                echo json_encode(['error' => 'Method not allowed']);
+                return;
+            }
+            Auth::logout();
+            echo json_encode(['success' => true]);
+            break;
+
+        case 'status':
+            if ($method !== 'GET') {
+                http_response_code(405);
+                echo json_encode(['error' => 'Method not allowed']);
+                return;
+            }
+            $user = Auth::check();
+            echo json_encode([
+                'authenticated' => $user !== null,
+                'user'          => $user,
+                'csrf_token'    => CSRF::getToken(),
+            ]);
+            break;
+
+        default:
+            http_response_code(404);
+            echo json_encode(['error' => 'Unknown auth action']);
+    }
+}

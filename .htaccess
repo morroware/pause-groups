@@ -1,0 +1,36 @@
+RewriteEngine On
+
+# Don't rewrite requests for existing files or directories
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+
+# Route everything through index.php
+RewriteRule ^(.*)$ index.php [QSA,L]
+
+# Deny direct access to PHP library and API files
+RewriteRule ^lib/ - [F,L]
+RewriteRule ^api/ - [F,L]
+
+# Deny access to data directory
+RewriteRule ^data/ - [F,L]
+
+# Deny access to config and sensitive files
+<FilesMatch "\.(db|lock|log|yaml|md)$">
+    Require all denied
+</FilesMatch>
+
+<Files "config.php">
+    Require all denied
+</Files>
+
+<Files "cron.php">
+    Require all denied
+</Files>
+
+<Files "run_action.php">
+    Require all denied
+</Files>
+
+<Files "install.php">
+    # Allow access during setup, recommend removing after install
+</Files>
