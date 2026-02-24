@@ -103,6 +103,10 @@ if ($isCli) {
     echo "\nInitializing database...\n";
     try {
         $db = DB::getInstance();
+        // Make database files group-writable so the web server can access them
+        @chmod(DB_PATH, 0660);
+        @chmod(DB_PATH . '-wal', 0660);
+        @chmod(DB_PATH . '-shm', 0660);
         echo "[OK] Database initialized at: " . DB_PATH . "\n";
     } catch (Exception $e) {
         echo "[ERROR] Database initialization failed: " . $e->getMessage() . "\n";
@@ -200,11 +204,18 @@ if ($isCli) {
     echo "  5 0 * * * /usr/bin/php " . __DIR__ . "/cron.php >> " . dirname(DB_PATH) . "/cron.log 2>&1\n\n";
     echo "This runs the daily scheduler at 00:05.\n";
 
-    echo "\n╔══════════════════════════════════════╗\n";
+    // Step 7: Set web server ownership
+    echo "\n--- File Permissions ---\n";
+    $dataDir = dirname(DB_PATH);
+    echo "The web server needs read/write access to the data directory.\n";
+    echo "Run this command now:\n\n";
+    echo "  sudo chown -R www-data:www-data $dataDir\n\n";
+
+    echo "╔══════════════════════════════════════╗\n";
     echo "║  Setup complete!                     ║\n";
     echo "╚══════════════════════════════════════╝\n\n";
     echo "Next steps:\n";
-    echo "  1. Point your web server to: " . __DIR__ . "\n";
+    echo "  1. Run the chown command above (required for login to work!)\n";
     echo "  2. Navigate to the site and log in\n";
     echo "  3. Configure CenterEdge API in Settings (if not done above)\n";
     echo "  4. Create Pause Groups, then Schedules\n\n";

@@ -105,8 +105,15 @@ if (strpos($path, 'api/') === 0) {
         echo json_encode(['error' => $e->getMessage()]);
     } catch (Exception $e) {
         http_response_code(500);
-        echo json_encode(['error' => 'Internal server error']);
-        error_log('Unhandled exception: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+        $msg = $e->getMessage();
+        // Surface actionable details for common setup issues
+        if (stripos($msg, 'unable to open database') !== false || stripos($msg, 'readonly') !== false) {
+            $hint = 'Database error: ' . $msg . '. Check that the data/ directory and .db file are writable by the web server (e.g. sudo chown -R www-data:www-data data/).';
+            echo json_encode(['error' => $hint]);
+        } else {
+            echo json_encode(['error' => 'Internal server error: ' . $msg]);
+        }
+        error_log('Unhandled exception: ' . $msg . "\n" . $e->getTraceAsString());
     }
     exit;
 }
@@ -153,6 +160,7 @@ $basePathJson = json_encode($basePath);
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pause Group Automation</title>
+    <link rel="icon" href="data:,">
     <meta name="csrf-token" content="<?= htmlspecialchars($csrfToken) ?>">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
