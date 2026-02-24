@@ -17,9 +17,10 @@ class Auth {
         }
 
         $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
+        $cookiePath = (defined('BASE_PATH') && BASE_PATH !== '') ? rtrim(BASE_PATH, '/') . '/' : '/';
         session_set_cookie_params([
             'lifetime' => 0,
-            'path'     => '/',
+            'path'     => $cookiePath,
             'domain'   => '',
             'secure'   => $secure,
             'httponly'  => true,

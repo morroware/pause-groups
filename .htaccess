@@ -1,20 +1,19 @@
 RewriteEngine On
 
-# Don't rewrite requests for existing files or directories
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-
-# Route everything through index.php
-RewriteRule ^(.*)$ index.php [QSA,L]
-
-# Deny direct access to PHP library and API files
-RewriteRule ^lib/ - [F,L]
-RewriteRule ^api/ - [F,L]
-
-# Deny access to data directory
+# Deny access to data directory unconditionally
 RewriteRule ^data/ - [F,L]
 
-# Deny access to config and sensitive files
+# Deny direct access to PHP files in lib/ and api/ directories
+# (API routes like api/auth/login are virtual paths handled by index.php)
+RewriteCond %{REQUEST_FILENAME} -f
+RewriteRule ^(lib|api)/ - [F,L]
+
+# Route everything else through index.php (except existing files/directories)
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ index.php [QSA,L]
+
+# Deny access to sensitive file types
 <FilesMatch "\.(db|lock|log|yaml|md)$">
     Require all denied
 </FilesMatch>
