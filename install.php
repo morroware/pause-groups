@@ -3,6 +3,7 @@
  * Guided first-run setup. Creates database, first admin user, optional API config.
  *
  * Usage (CLI):  php install.php
+ *               php install.php --reset   (wipe database and start fresh)
  * Usage (Web):  Navigate to /install.php in browser
  */
 
@@ -56,6 +57,26 @@ if ($isCli) {
     echo "╔══════════════════════════════════════╗\n";
     echo "║  Pause Group Automation — Setup      ║\n";
     echo "╚══════════════════════════════════════╝\n\n";
+
+    // Handle --reset flag: wipe existing database to start fresh
+    if (in_array('--reset', $argv ?? [], true)) {
+        if (file_exists(DB_PATH)) {
+            echo "[WARN] This will DELETE the existing database and all data:\n";
+            echo "       " . DB_PATH . "\n\n";
+            $confirm = cliPrompt('Type "yes" to confirm', '');
+            if ($confirm !== 'yes') {
+                echo "\n[ABORT] Reset cancelled.\n";
+                exit(0);
+            }
+            // Remove database and WAL/SHM journal files
+            @unlink(DB_PATH);
+            @unlink(DB_PATH . '-wal');
+            @unlink(DB_PATH . '-shm');
+            echo "[OK] Database deleted. Starting fresh...\n\n";
+        } else {
+            echo "[INFO] No existing database found. Proceeding with fresh install.\n\n";
+        }
+    }
 
     // Step 1: Ensure data directory
     $dataDir = dirname(DB_PATH);
