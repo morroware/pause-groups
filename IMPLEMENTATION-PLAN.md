@@ -524,9 +524,9 @@ php /var/www/pause-groups/install.php
 sudo systemctl enable atd
 sudo systemctl start atd
 
-# 6. Configure daily cron (plans the day's actions at midnight)
+# 6. Configure daily cron (runs once, just after midnight, to plan the day)
 crontab -e
-# Add: 0 0 * * * /usr/bin/php /var/www/pause-groups/cron.php >> /var/www/pause-groups/data/cron.log 2>&1
+# Add: 5 0 * * * /usr/bin/php /var/www/pause-groups/cron.php >> /var/www/pause-groups/data/cron.log 2>&1
 # Run once manually to plan today: php /var/www/pause-groups/cron.php
 
 # 7. Configure web server URL rewriting
