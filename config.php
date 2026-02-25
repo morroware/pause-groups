@@ -18,6 +18,9 @@ define('DEFAULT_TIMEZONE', 'America/New_York');
 // Session lifetime in seconds (2 hours)
 define('SESSION_LIFETIME', 7200);
 
+// Debug mode (when true, API 500 responses may include internal error details)
+define('APP_DEBUG', filter_var(getenv('PG_APP_DEBUG') ?: false, FILTER_VALIDATE_BOOLEAN));
+
 // Application base path (auto-detected)
 define('BASE_PATH', rtrim(dirname($_SERVER['SCRIPT_NAME'] ?? ''), '/'));
 

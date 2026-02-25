@@ -26,6 +26,11 @@ $path = strtok($path, '?');
 $path = trim($path, '/');
 $method = $_SERVER['REQUEST_METHOD'];
 
+// Basic security headers for all responses
+header('X-Content-Type-Options: nosniff');
+header('X-Frame-Options: DENY');
+header('Referrer-Policy: strict-origin-when-cross-origin');
+
 // ---------------------------------------------------
 // API Routes
 // ---------------------------------------------------
@@ -111,7 +116,10 @@ if (strpos($path, 'api/') === 0) {
             $hint = 'Database error: ' . $msg . '. Check that the data/ directory and .db file are writable by the web server (e.g. sudo chown -R www-data:www-data data/).';
             echo json_encode(['error' => $hint]);
         } else {
-            echo json_encode(['error' => 'Internal server error: ' . $msg]);
+            $publicMessage = APP_DEBUG
+                ? 'Internal server error: ' . $msg
+                : 'Internal server error';
+            echo json_encode(['error' => $publicMessage]);
         }
         error_log('Unhandled exception: ' . $msg . "\n" . $e->getTraceAsString());
     }
@@ -122,8 +130,10 @@ if (strpos($path, 'api/') === 0) {
 // Static file serving (CSS, JS)
 // ---------------------------------------------------
 if (strpos($path, 'public/') === 0) {
-    $filePath = __DIR__ . '/' . $path;
-    if (file_exists($filePath) && is_file($filePath)) {
+    $publicRoot = realpath(__DIR__ . '/public');
+    $filePath = realpath(__DIR__ . '/' . $path);
+
+    if ($publicRoot && $filePath && is_file($filePath) && strpos($filePath, $publicRoot . DIRECTORY_SEPARATOR) === 0) {
         $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
         $mimeTypes = [
             'css'  => 'text/css',
