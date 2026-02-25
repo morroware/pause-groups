@@ -1,7 +1,7 @@
 # Pause Group Automation - Implementation Plan
 
-> **Status:** Draft for team review
-> **Date:** 2026-02-24
+> **Status:** MVP complete, reviewed and hardened
+> **Date:** 2026-02-25
 > **API Reference:** `centeredge-cardsystemapi.yaml` (CenterEdge Card System Integration API v1.8.0)
 
 ---
@@ -498,6 +498,10 @@ The frontend is a single-page application using hash-based routing. No build too
 | **CLI-only scripts** | `cron.php` and `run_action.php` check `php_sapi_name() !== 'cli'` and reject web requests |
 | **Concurrent execution** | File locking (`flock` with `LOCK_NB`) on action execution prevents overlapping state changes |
 | **Brute force login** | `sleep(1)` on failed login attempts |
+| **Path traversal** | `realpath()` check ensures static files resolve under the canonical `public/` directory |
+| **Error leakage** | `APP_DEBUG` flag controls error detail; production returns generic messages, full errors logged server-side |
+| **Response headers** | `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin` |
+| **Web access control** | `.htaccess` blocks direct access to `data/`, `lib/`, `api/` PHP files, `config.php`, CLI scripts, and sensitive file types (`.db`, `.log`, `.yaml`, `.md`) |
 
 ---
 
@@ -507,8 +511,8 @@ The frontend is a single-page application using hash-based routing. No build too
 # 1. Extract/clone files to web server directory
 cp -r pause-groups/ /var/www/pause-groups/
 
-# 2. Edit config.php — set a random encryption key
-#    Generate one with: php -r "echo bin2hex(random_bytes(16));"
+# 2. Edit config.php — set a random encryption key (64 hex chars = 32 bytes)
+#    Generate one with: php -r "echo bin2hex(random_bytes(32));"
 nano /var/www/pause-groups/config.php
 
 # 3. Set file permissions
@@ -553,42 +557,48 @@ location /pause-groups {
 
 ---
 
-## 9. Implementation Phases
+## 9. Implementation Phases (Complete)
 
-### Phase 1 — Foundation (no external dependencies)
-1. `config.php` — Static configuration
-2. `lib/db.php` — Database layer with full schema creation
-3. `lib/crypto.php` — AES-256-CBC encryption utilities
-4. `lib/validator.php` — Input validation helpers
-5. `lib/csrf.php` — CSRF token management
-6. `lib/auth.php` — Admin session authentication
+All phases have been implemented, integrated, and reviewed.
 
-### Phase 2 — CenterEdge Integration
-7. `lib/centeredge_client.php` — API client (auth, games, categories, patch)
-8. `api/settings.php` — Store/retrieve API configuration
-9. `api/games.php` — Proxy game and category data from CenterEdge
+### Phase 1 -- Foundation (no external dependencies)
+1. `config.php` -- Static configuration
+2. `lib/db.php` -- Database layer with full schema creation
+3. `lib/crypto.php` -- AES-256-CBC encryption utilities
+4. `lib/validator.php` -- Input validation helpers
+5. `lib/csrf.php` -- CSRF token management
+6. `lib/auth.php` -- Admin session authentication
 
-### Phase 3 — Core Data Model
-10. `api/groups.php` — Pause group CRUD
-11. `api/schedules.php` — Schedule CRUD
-12. `api/overrides.php` — Override CRUD
+### Phase 2 -- CenterEdge Integration
+7. `lib/centeredge_client.php` -- API client (auth, games, categories, patch)
+8. `api/settings.php` -- Store/retrieve API configuration
+9. `api/games.php` -- Proxy game and category data from CenterEdge
 
-### Phase 4 — Scheduling Engine
-13. `lib/scheduler.php` — Core scheduling logic (day planning + action execution)
-14. `cron.php` — Daily cron: plans the day, queues `at` jobs
-15. `run_action.php` — Single action executor (called by `at` at scheduled times)
+### Phase 3 -- Core Data Model
+10. `api/groups.php` -- Pause group CRUD
+11. `api/schedules.php` -- Schedule CRUD
+12. `api/overrides.php` -- Override CRUD
 
-### Phase 5 — Router + Frontend
-16. `index.php` — Main router
-17. `.htaccess` + `data/.htaccess` — Web server config
-18. `public/css/style.css` — All styles
-19. Frontend JS modules (api → app → login → dashboard → groups → schedules → overrides → logs → settings)
+### Phase 4 -- Scheduling Engine
+13. `lib/scheduler.php` -- Core scheduling logic (day planning + action execution)
+14. `cron.php` -- Daily cron: plans the day, queues `at` jobs
+15. `run_action.php` -- Single action executor (called by `at` at scheduled times)
 
-### Phase 6 — Setup + Polish
-20. `install.php` — Guided first-run setup
-21. `api/logs.php` — Action log API
-22. `api/users.php` — Admin user management
-23. `api/auth.php` — Auth API endpoints
+### Phase 5 -- Router + Frontend
+16. `index.php` -- Main router
+17. `.htaccess` + `data/.htaccess` -- Web server config
+18. `public/css/style.css` -- All styles
+19. Frontend JS modules (api, app, login, dashboard, groups, schedules, overrides, logs, settings)
+
+### Phase 6 -- Setup + Polish
+20. `install.php` -- Guided first-run setup
+21. `api/logs.php` -- Action log API
+22. `api/users.php` -- Admin user management
+23. `api/auth.php` -- Auth API endpoints
+
+### Phase 7 -- Hardening + Review
+24. Security audit and fixes (path traversal, error leakage, response headers)
+25. Integration bug fixes across frontend-backend boundary (see `AUDIT.md`)
 
 ---
 

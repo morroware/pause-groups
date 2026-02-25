@@ -64,7 +64,7 @@
 
         const usernameInput = App.el('input', {
             className: 'form-input', type: 'text',
-            value: data.api_username || '',
+            value: data.username || '',
             placeholder: 'API username'
         });
         body.appendChild(App.el('div', { className: 'form-group' }, [
@@ -74,7 +74,7 @@
 
         const passwordInput = App.el('input', {
             className: 'form-input', type: 'password',
-            value: data.api_password || '',
+            value: data.password || '',
             placeholder: 'API password'
         });
         body.appendChild(App.el('div', { className: 'form-group' }, [
@@ -106,9 +106,17 @@
                     // Save first, then test
                     await saveApiConfig(baseUrlInput, usernameInput, passwordInput, apiKeyInput);
                     const result = await API.post('settings/test', {});
-                    testResult.textContent = '\u2713 Connected. ' + (result.message || '');
-                    testResult.className = 'text-sm';
-                    testResult.style.color = 'var(--success)';
+                    if (result.success) {
+                        testResult.textContent = '\u2713 Connected to ' + (result.system_name || 'CenterEdge') +
+                            '. Found ' + (result.game_count || 0) + ' games, ' + (result.category_count || 0) + ' categories.' +
+                            (result.supports_operation_status ? '' : ' WARNING: operationStatus not supported.');
+                        testResult.className = 'text-sm';
+                        testResult.style.color = 'var(--success)';
+                    } else {
+                        testResult.textContent = '\u2717 ' + (result.error || 'Connection failed.');
+                        testResult.className = 'text-sm';
+                        testResult.style.color = 'var(--danger)';
+                    }
                 } catch (err) {
                     testResult.textContent = '\u2717 ' + err.message;
                     testResult.className = 'text-sm';
@@ -146,8 +154,8 @@
     async function saveApiConfig(baseUrlInput, usernameInput, passwordInput, apiKeyInput) {
         await API.put('settings', {
             base_url: baseUrlInput.value.trim(),
-            api_username: usernameInput.value.trim(),
-            api_password: passwordInput.value,
+            username: usernameInput.value.trim(),
+            password: passwordInput.value,
             api_key: apiKeyInput.value.trim()
         });
     }

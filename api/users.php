@@ -95,7 +95,10 @@ function updateUser(int $userId, ?array $input, array $currentUser): void {
         throw new RuntimeException('You cannot deactivate your own account.');
     }
 
-    $displayName = Validator::requireString($input, 'display_name', 100);
+    $displayName = Validator::optionalString($input, 'display_name', 100);
+    if ($displayName === '') {
+        $displayName = $existing['display_name'];
+    }
     $isActive = (int)($input['is_active'] ?? $existing['is_active']);
 
     DB::execute(
