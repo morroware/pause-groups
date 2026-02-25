@@ -234,6 +234,13 @@ $messageType = '';
 // Process POST actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
+        // Hard stop after first-time setup: never allow creating additional
+        // admin users from this unauthenticated installer endpoint.
+        $setupAlreadyCompleted = (bool)DB::queryOne('SELECT id FROM admin_users LIMIT 1');
+        if ($setupAlreadyCompleted) {
+            throw new RuntimeException('Setup has already been completed. Delete or restrict install.php after first run.');
+        }
+
         switch ($step) {
             case 'create_admin':
                 $username = trim($_POST['username'] ?? '');
