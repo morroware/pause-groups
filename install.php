@@ -167,19 +167,19 @@ if ($isCli) {
         $apiKey  = cliPrompt('API Key (optional, press Enter to skip)', '');
 
         if ($baseUrl) {
-            DB::setConfig('base_url', $baseUrl);
+            DB::setConfig('base_url', $baseUrl, false);
             echo "  Base URL saved.\n";
         }
         if ($apiUser) {
-            DB::setConfig('api_username', Crypto::encrypt($apiUser));
+            DB::setConfig('username', $apiUser, true);
             echo "  Username saved (encrypted).\n";
         }
         if ($apiPass) {
-            DB::setConfig('api_password', Crypto::encrypt($apiPass));
+            DB::setConfig('password', $apiPass, true);
             echo "  Password saved (encrypted).\n";
         }
         if ($apiKey) {
-            DB::setConfig('api_key', Crypto::encrypt($apiKey));
+            DB::setConfig('api_key', $apiKey, true);
             echo "  API Key saved (encrypted).\n";
         }
 

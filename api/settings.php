@@ -35,35 +35,42 @@ function handleSettings(string $method, array $parts, ?array $input): void {
     }
 
     if ($method === 'PUT' && $action === '') {
-        // Update settings
-        $baseUrl  = Validator::requireUrl($input, 'base_url');
-        $username = Validator::requireString($input, 'username');
-        $password = $input['password'] ?? '';
-        $apiKey   = $input['api_key'] ?? '';
-        $timezone = Validator::requireString($input, 'timezone', 100);
+        // Detect what's being updated: API config vs. timezone-only
+        $hasApiFields = isset($input['base_url']) || isset($input['username']);
 
-        // Validate timezone
-        try {
-            new DateTimeZone($timezone);
-        } catch (Exception $e) {
-            throw new RuntimeException("Invalid timezone: $timezone");
+        if ($hasApiFields) {
+            // Full API config update
+            $baseUrl  = Validator::requireUrl($input, 'base_url');
+            $username = Validator::requireString($input, 'username');
+            $password = $input['password'] ?? '';
+            $apiKey   = $input['api_key'] ?? '';
+
+            DB::setConfig('base_url', $baseUrl, false);
+            DB::setConfig('username', $username, true);
+
+            // Only update password if not the masked placeholder
+            if ($password !== '' && $password !== '********') {
+                DB::setConfig('password', $password, true);
+                // Clear cached token when credentials change
+                DB::setConfig('bearer_token', null, false);
+                DB::setConfig('token_fetched_at', null, false);
+            }
+
+            // Only update api_key if not the masked placeholder
+            if ($apiKey !== '********') {
+                DB::setConfig('api_key', $apiKey ?: null, $apiKey ? true : false);
+            }
         }
 
-        DB::setConfig('base_url', $baseUrl, false);
-        DB::setConfig('username', $username, true);
-        DB::setConfig('timezone', $timezone, false);
-
-        // Only update password if not the masked placeholder
-        if ($password !== '' && $password !== '********') {
-            DB::setConfig('password', $password, true);
-            // Clear cached token when credentials change
-            DB::setConfig('bearer_token', null, false);
-            DB::setConfig('token_fetched_at', null, false);
-        }
-
-        // Only update api_key if not the masked placeholder
-        if ($apiKey !== '********') {
-            DB::setConfig('api_key', $apiKey ?: null, $apiKey ? true : false);
+        // Update timezone if provided
+        if (isset($input['timezone'])) {
+            $timezone = Validator::requireString($input, 'timezone', 100);
+            try {
+                new DateTimeZone($timezone);
+            } catch (Exception $e) {
+                throw new RuntimeException("Invalid timezone: $timezone");
+            }
+            DB::setConfig('timezone', $timezone, false);
         }
 
         echo json_encode(['success' => true]);

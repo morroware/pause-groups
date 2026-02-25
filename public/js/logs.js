@@ -59,7 +59,7 @@
             onChange: () => { filters.source = sourceSelect.value || undefined; currentPage = 1; loadLogs(); }
         });
         sourceSelect.appendChild(App.el('option', { value: '', textContent: 'All Sources' }));
-        ['cron', 'manual', 'override', 'api', 'system'].forEach(s => {
+        ['cron', 'manual', 'override', 'schedule'].forEach(s => {
             sourceSelect.appendChild(App.el('option', { value: s, textContent: s }));
         });
 
@@ -74,7 +74,7 @@
             onChange: () => { filters.action = actionSelect.value || undefined; currentPage = 1; loadLogs(); }
         });
         actionSelect.appendChild(App.el('option', { value: '', textContent: 'All Actions' }));
-        ['pause', 'unpause', 'sync', 'plan_day', 'execute_action', 'login', 'logout'].forEach(a => {
+        ['pause', 'unpause', 'skip', 'plan_day', 'execute_action'].forEach(a => {
             actionSelect.appendChild(App.el('option', { value: a, textContent: a }));
         });
 
@@ -109,8 +109,8 @@
             const params = new URLSearchParams();
             params.set('page', String(currentPage));
             params.set('per_page', String(perPage));
-            if (filters.date_from) params.set('date_from', filters.date_from);
-            if (filters.date_to) params.set('date_to', filters.date_to);
+            if (filters.date_from) params.set('from', filters.date_from);
+            if (filters.date_to) params.set('to', filters.date_to);
             if (filters.source) params.set('source', filters.source);
             if (filters.action) params.set('action', filters.action);
             if (filters.success !== undefined) params.set('success', filters.success);
@@ -147,7 +147,7 @@
                 });
 
                 row.appendChild(App.el('td', {
-                    textContent: App.formatDatetime(log.created_at),
+                    textContent: App.formatDatetime(log.timestamp),
                     style: { whiteSpace: 'nowrap', fontSize: '0.8rem' }
                 }));
 
