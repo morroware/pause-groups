@@ -1,7 +1,6 @@
 # Pause Group Automation
 
-A web application for scheduling and managing pause/unpause operations on arcade game groups via the CenterEdge Card System API. Built for facility operations teams that need to define game groups, set recurring pause windows, and apply temporary overrides.
-
+A web application for scheduling and managing pause/unpause operations on arcade game groups via the CenterEdge Card System API. 
 ## Requirements
 
 | Requirement | Purpose |
