@@ -8,6 +8,7 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/crypto.php';
 
 class CenterEdgeClient {
+    private const MAX_PAGINATION_LOOPS = 1000;
     private ?string $baseUrl = null;
     private ?string $username = null;
     private ?string $password = null;
@@ -115,8 +116,14 @@ class CenterEdgeClient {
         $allGames = [];
         $skip = 0;
         $take = GAMES_PAGE_SIZE;
+        $pagesFetched = 0;
 
         do {
+            $pagesFetched++;
+            if ($pagesFetched > self::MAX_PAGINATION_LOOPS) {
+                throw new RuntimeException('CenterEdge API pagination exceeded safety limit while fetching games. Check API pagination behavior.');
+            }
+
             $result = $this->request('GET', '/games', null, ['skip' => $skip, 'take' => $take]);
             $games = $result['games'] ?? [];
             $allGames = array_merge($allGames, $games);
@@ -143,8 +150,14 @@ class CenterEdgeClient {
         $allCategories = [];
         $skip = 0;
         $take = GAMES_PAGE_SIZE;
+        $pagesFetched = 0;
 
         do {
+            $pagesFetched++;
+            if ($pagesFetched > self::MAX_PAGINATION_LOOPS) {
+                throw new RuntimeException('CenterEdge API pagination exceeded safety limit while fetching categories. Check API pagination behavior.');
+            }
+
             $result = $this->request('GET', '/games/categories', null, ['skip' => $skip, 'take' => $take]);
             $categories = $result['categories'] ?? [];
             $allCategories = array_merge($allCategories, $categories);
@@ -174,12 +187,20 @@ class CenterEdgeClient {
 
         $gamesPayload = [];
         foreach ($changes as $gameId => $status) {
+            if (!in_array($status, ['enabled', 'paused', 'outOfService'], true)) {
+                throw new RuntimeException("Invalid operationStatus '$status' for game '$gameId'.");
+            }
             $gamesPayload[(string)$gameId] = [
                 ['op' => 'replace', 'path' => '/operationStatus', 'value' => $status]
             ];
         }
 
-        return $this->request('PATCH', '/games', ['games' => $gamesPayload]);
+        $result = $this->request('PATCH', '/games', ['games' => $gamesPayload]);
+
+        return [
+            'games' => is_array($result['games'] ?? null) ? $result['games'] : [],
+            'errors' => is_array($result['errors'] ?? null) ? $result['errors'] : [],
+        ];
     }
 
     /**
@@ -232,9 +253,11 @@ class CenterEdgeClient {
      */
     public function syncGamesToCache(): int {
         $games = $this->getGames();
+        $seenGameIds = [];
 
         foreach ($games as $game) {
             $gameId = (string)$game['id'];
+            $seenGameIds[] = $gameId;
             $gameName = $game['name'] ?? '';
             $opStatus = $game['operationStatus'] ?? 'enabled';
             $categories = json_encode($game['categories'] ?? []);
@@ -245,6 +268,21 @@ class CenterEdgeClient {
                  ON CONFLICT(game_id) DO UPDATE SET
                      game_name = :p1, operation_status = :p2, categories = :p3, last_synced_at = datetime(\'now\')',
                 [$gameId, $gameName, $opStatus, $categories]
+            );
+        }
+
+        if (empty($seenGameIds)) {
+            DB::execute('DELETE FROM game_state_cache');
+        } else {
+            $params = [];
+            $placeholders = [];
+            foreach ($seenGameIds as $i => $gameId) {
+                $placeholders[] = ':p' . $i;
+                $params[] = $gameId;
+            }
+            DB::execute(
+                'DELETE FROM game_state_cache WHERE game_id NOT IN (' . implode(',', $placeholders) . ')',
+                $params
             );
         }
 
@@ -332,7 +370,13 @@ class CenterEdgeClient {
             throw new RuntimeException("CenterEdge API connection error: $curlError");
         }
 
-        $data = json_decode($responseBody, true);
+        $data = [];
+        if ($responseBody !== '' && $responseBody !== false) {
+            $data = json_decode($responseBody, true);
+            if ($data === null && json_last_error() !== JSON_ERROR_NONE) {
+                throw new RuntimeException('CenterEdge API returned invalid JSON: ' . json_last_error_msg());
+            }
+        }
 
         if ($httpCode === 401) {
             throw new RuntimeException("CenterEdge API error: 401 Unauthorized");
