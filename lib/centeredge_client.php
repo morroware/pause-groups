@@ -64,6 +64,7 @@ class CenterEdgeClient {
         $body = [
             'username'         => $this->username,
             'passwordHash'     => $passwordHash,
+            'password'         => $this->password,
             'requestTimestamp'  => $requestTimestamp,
         ];
 
