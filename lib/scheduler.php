@@ -264,6 +264,78 @@ class Scheduler {
     }
 
     /**
+     * Enforce the desired state for each active group at the current time.
+     * This acts as a watchdog fallback when at jobs are delayed or unavailable.
+     */
+    public static function enforceCurrentStates(): array {
+        $tz = DB::getConfig('timezone') ?? DEFAULT_TIMEZONE;
+        date_default_timezone_set($tz);
+
+        $now = new DateTime('now', new DateTimeZone($tz));
+        $todayDow = (int)$now->format('w');
+        $nowStr = $now->format('Y-m-d H:i');
+        $nowTime = $now->format('H:i');
+
+        // One sync for the whole watchdog cycle.
+        try {
+            self::syncGameStates();
+        } catch (Exception $e) {
+            error_log('Watchdog sync failed: ' . $e->getMessage());
+        }
+
+        $summary = ['groups_checked' => 0, 'groups_enforced' => 0, 'results' => []];
+        $groups = DB::query('SELECT id FROM pause_groups WHERE is_active = 1');
+
+        foreach ($groups as $group) {
+            $groupId = (int)$group['id'];
+            $summary['groups_checked']++;
+
+            // Highest-priority rule: active override wins.
+            $activeOverride = DB::queryOne(
+                'SELECT action FROM schedule_overrides
+                 WHERE pause_group_id = :p0 AND start_datetime <= :p1 AND end_datetime > :p1
+                 ORDER BY start_datetime DESC, id DESC LIMIT 1',
+                [$groupId, $nowStr]
+            );
+
+            $desiredAction = 'unpause';
+            $source = 'watchdog';
+
+            if ($activeOverride) {
+                $desiredAction = $activeOverride['action'];
+                $source = 'override';
+            } else {
+                $activeSchedule = DB::queryOne(
+                    'SELECT id FROM schedules
+                     WHERE pause_group_id = :p0 AND day_of_week = :p1 AND is_active = 1
+                       AND start_time <= :p2 AND end_time > :p2
+                     LIMIT 1',
+                    [$groupId, $todayDow, $nowTime]
+                );
+                if ($activeSchedule) {
+                    $desiredAction = 'pause';
+                    $source = 'schedule';
+                }
+            }
+
+            $result = self::executeStateChange(
+                $groupId,
+                $desiredAction === 'pause' ? 'paused' : 'enabled',
+                $source,
+                false
+            );
+
+            if (!empty($result['changed'])) {
+                $summary['groups_enforced']++;
+            }
+
+            $summary['results'][$groupId] = $result;
+        }
+
+        return $summary;
+    }
+
+    /**
      * Execute a single scheduled action by ID.
      * Returns array of results.
      */
@@ -305,14 +377,16 @@ class Scheduler {
     /**
      * Core state change logic: resolve games, check states, patch CenterEdge.
      */
-    private static function executeStateChange(int $groupId, string $desiredStatus, string $source): array {
+    private static function executeStateChange(int $groupId, string $desiredStatus, string $source, bool $syncCache = true): array {
         $results = ['changed' => [], 'skipped' => [], 'errors' => []];
 
         try {
             $client = new CenterEdgeClient();
 
             // Sync fresh game states
-            $client->syncGamesToCache();
+            if ($syncCache) {
+                $client->syncGamesToCache();
+            }
 
             // Resolve group to game IDs
             $gameIds = self::resolveGroupGames($groupId);
