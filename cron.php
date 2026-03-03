@@ -4,7 +4,7 @@
  * Run once per day (recommended: 00:05).
  *
  * Usage: php cron.php
- * Crontab: 5 0 * * * /usr/bin/php /path/to/pause-groups/cron.php >> /path/to/pause-groups/data/cron.log 2>&1
+ * Crontab: 5 0 * * * /usr/bin/php /var/www/html/ce/pause-groups-main/cron.php >> /var/www/html/ce/pause-groups-main/data/cron.log 2>&1
  */
 
 // CLI-only guard
