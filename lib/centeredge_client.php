@@ -381,12 +381,13 @@ class CenterEdgeClient {
         }
 
         if ($httpCode === 401) {
-            throw new RuntimeException("CenterEdge API error: 401 Unauthorized");
+            $msg = $data['message'] ?? ($data['error'] ?? 'Unauthorized – check username, password, and API key');
+            throw new RuntimeException("CenterEdge API error: $msg (HTTP 401)");
         }
 
         if ($httpCode === 403) {
-            $msg = $data['message'] ?? 'Forbidden';
-            throw new RuntimeException("CenterEdge API error: 403 $msg");
+            $msg = $data['message'] ?? ($data['error'] ?? 'Forbidden – invalid credentials');
+            throw new RuntimeException("CenterEdge API error: $msg (HTTP 403)");
         }
 
         if ($httpCode >= 400) {
