@@ -65,7 +65,8 @@
         const usernameInput = App.el('input', {
             className: 'form-input', type: 'text',
             value: data.username || '',
-            placeholder: 'API username'
+            placeholder: 'API username',
+            autocomplete: 'off'
         });
         body.appendChild(App.el('div', { className: 'form-group' }, [
             App.el('label', { className: 'form-label', textContent: 'Username' }),
@@ -152,9 +153,15 @@
     }
 
     async function saveApiConfig(baseUrlInput, usernameInput, passwordInput, apiKeyInput) {
+        const baseUrl = baseUrlInput.value.trim();
+        const username = usernameInput.value.trim();
+
+        if (!baseUrl) { throw new Error('API Base URL is required.'); }
+        if (!username) { throw new Error('Username is required.'); }
+
         await API.put('settings', {
-            base_url: baseUrlInput.value.trim(),
-            username: usernameInput.value.trim(),
+            base_url: baseUrl,
+            username: username,
             password: passwordInput.value,
             api_key: apiKeyInput.value.trim()
         });
