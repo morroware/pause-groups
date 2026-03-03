@@ -367,14 +367,15 @@ class CenterEdgeClient {
         curl_close($ch);
 
         if ($curlError) {
-            throw new RuntimeException("CenterEdge API connection error: $curlError");
+            throw new RuntimeException("CenterEdge API connection error ($url): $curlError");
         }
 
         $data = [];
         if ($responseBody !== '' && $responseBody !== false) {
             $data = json_decode($responseBody, true);
             if ($data === null && json_last_error() !== JSON_ERROR_NONE) {
-                throw new RuntimeException('CenterEdge API returned invalid JSON: ' . json_last_error_msg());
+                $snippet = substr(trim($responseBody), 0, 200);
+                throw new RuntimeException("CenterEdge API ($url) returned non-JSON (HTTP $httpCode). Response begins with: $snippet");
             }
         }
 
