@@ -81,12 +81,42 @@ class Scheduler {
                     ];
                 }
 
-                // If override ends today, add end transition (reverse action)
+                // If override ends today, restore to the correct state.
+                // Check other overrides first, then fall back to the recurring schedule.
                 if ($endDate === $date) {
-                    $reverseAction = $override['action'] === 'pause' ? 'unpause' : 'pause';
+                    $endTime = $endDt->format('H:i');
+
+                    // Check if another override is still active at the end time
+                    $restoreAction = null;
+                    foreach ($overrides as $other) {
+                        if ($other['id'] === $override['id']) {
+                            continue;
+                        }
+                        $otherStart = new DateTime($other['start_datetime']);
+                        $otherEnd = new DateTime($other['end_datetime']);
+                        $otherStartStr = $otherStart->format('Y-m-d H:i');
+                        $otherEndStr = $otherEnd->format('Y-m-d H:i');
+                        $endFullStr = $endDt->format('Y-m-d H:i');
+                        if ($otherStartStr <= $endFullStr && $otherEndStr > $endFullStr) {
+                            $restoreAction = $other['action'];
+                            break;
+                        }
+                    }
+
+                    // No other override active — fall back to the recurring schedule
+                    if ($restoreAction === null) {
+                        $restoreAction = 'unpause'; // default: enabled
+                        foreach ($schedules as $sched) {
+                            if ($sched['start_time'] <= $endTime && $sched['end_time'] > $endTime) {
+                                $restoreAction = 'pause';
+                                break;
+                            }
+                        }
+                    }
+
                     $transitions[] = [
-                        'time'   => $endDt->format('H:i'),
-                        'action' => $reverseAction,
+                        'time'   => $endTime,
+                        'action' => $restoreAction,
                         'source' => 'override',
                         'priority' => 1,
                     ];
