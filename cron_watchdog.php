@@ -4,7 +4,7 @@
  * Run every 5 minutes as a safety net alongside the daily cron.
  *
  * Usage: php cron_watchdog.php
- * Crontab example: run every 5 minutes with php /path/to/pause-groups/cron_watchdog.php >> /path/to/pause-groups/data/watchdog.log 2>&1
+ * Crontab: * * * * * /usr/bin/php /var/www/html/ce/pause-groups-main/cron_watchdog.php >> /var/www/html/ce/pause-groups-main/data/watchdog.log 2>&1
  */
 
 // CLI-only guard

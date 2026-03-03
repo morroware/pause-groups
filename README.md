@@ -36,10 +36,13 @@ php install.php --reset
 
 ### Cron Setup
 
-Add a daily cron job to sync games and queue the day's scheduled actions:
+Use the following crontab entries (project path: `/var/www/html/ce/pause-groups-main/`):
 
 ```
-5 0 * * * /usr/bin/php /path/to/pause-groups/cron.php >> /path/to/pause-groups/data/cron.log 2>&1
+0 0 * * * /sbin/reboot
+@reboot dhclient -v
+* * * * * /usr/bin/php /var/www/html/ce/pause-groups-main/cron_watchdog.php >> /var/www/html/ce/pause-groups-main/data/watchdog.log 2>&1
+5 0 * * * /usr/bin/php /var/www/html/ce/pause-groups-main/cron.php >> /var/www/html/ce/pause-groups-main/data/cron.log 2>&1
 ```
 
 ## Architecture
