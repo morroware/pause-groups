@@ -219,9 +219,16 @@ class Scheduler {
 
         $scriptPath = realpath(__DIR__ . '/../run_action.php');
 
+        // Use the full PHP CLI path so at jobs work regardless of PATH
+        $phpBin = PHP_BINDIR . '/php';
+        if (!file_exists($phpBin)) {
+            $phpBin = PHP_BINARY;
+        }
+
         foreach ($actions as $action) {
             $cmd = sprintf(
-                'echo "php %s --id %d" | at %s 2>&1',
+                'echo "%s %s --id %d" | at %s 2>&1',
+                escapeshellarg($phpBin),
                 escapeshellarg($scriptPath),
                 $action['id'],
                 escapeshellarg($action['scheduled_time'])
@@ -237,6 +244,8 @@ class Scheduler {
                     'UPDATE scheduled_actions SET at_job_id = :p0 WHERE id = :p1',
                     [$jobId, $action['id']]
                 );
+            } else {
+                error_log("Failed to queue at job for action #{$action['id']} at {$action['scheduled_time']}: exit=$exitCode output=$outputStr");
             }
         }
     }

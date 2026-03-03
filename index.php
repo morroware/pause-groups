@@ -37,6 +37,20 @@ header('Referrer-Policy: strict-origin-when-cross-origin');
 if (strpos($path, 'api/') === 0) {
     header('Content-Type: application/json; charset=utf-8');
 
+    // Safety net: execute any missed scheduled actions (at most once per minute).
+    // This catches actions whose at-jobs failed silently.
+    $missedCheckFile = __DIR__ . '/data/.last_missed_check';
+    if (!file_exists($missedCheckFile) || (time() - filemtime($missedCheckFile)) >= 60) {
+        @touch($missedCheckFile);
+        try {
+            require_once __DIR__ . '/lib/centeredge_client.php';
+            require_once __DIR__ . '/lib/scheduler.php';
+            Scheduler::executeMissedActions();
+        } catch (Exception $e) {
+            error_log('Missed-action check failed: ' . $e->getMessage());
+        }
+    }
+
     // CSRF validation for state-changing methods (exempt login endpoint)
     $isLogin = ($path === 'api/auth/login');
     if (!$isLogin && in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'])) {
