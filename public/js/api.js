@@ -36,16 +36,21 @@ const API = {
 
         const response = await fetch(url, opts);
 
-        if (response.status === 401) {
-            App.currentUser = null;
-            window.location.hash = '#/login';
-            throw new ApiError(401, 'Session expired. Please log in again.');
-        }
-
         let data = null;
         const text = await response.text();
         if (text) {
             try { data = JSON.parse(text); } catch (e) { data = null; }
+        }
+
+        if (response.status === 401) {
+            // Don't redirect if we're already on the login page (this is a login attempt)
+            const isLoginRequest = path === 'auth/login';
+            if (!isLoginRequest) {
+                App.currentUser = null;
+                window.location.hash = '#/login';
+            }
+            const msg = (data && data.error) ? data.error : 'Session expired. Please log in again.';
+            throw new ApiError(401, msg, data && data.field);
         }
 
         if (!response.ok) {
