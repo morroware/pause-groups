@@ -34,7 +34,7 @@ header('Referrer-Policy: strict-origin-when-cross-origin');
 // ---------------------------------------------------
 // API Routes
 // ---------------------------------------------------
-if (strpos($path, 'api/') === 0) {
+if ($path === 'api' || strpos($path, 'api/') === 0) {
     header('Content-Type: application/json; charset=utf-8');
 
     // Safety net: execute any missed scheduled actions (at most once per minute).

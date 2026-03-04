@@ -75,8 +75,10 @@ function listGroups(): void {
     date_default_timezone_set($tz);
     $now = new DateTime();
     $todayDow = (int)$now->format('w');
-    $currentTime = $now->format('H:i:s');
-    $currentDatetime = $now->format('Y-m-d H:i:s');
+    // Schedules/overrides are stored with minute precision (YYYY-MM-DD HH:MM / HH:MM).
+    // Match that format so string comparisons stay consistent at boundary minutes.
+    $currentTime = $now->format('H:i');
+    $currentDatetime = $now->format('Y-m-d H:i');
 
     foreach ($groups as &$group) {
         $gid = (int)$group['id'];
@@ -131,7 +133,7 @@ function listGroups(): void {
         if ($group['is_active']) {
             $activeOverride = DB::queryOne(
                 'SELECT name, action, end_datetime FROM schedule_overrides
-                 WHERE pause_group_id = :p0 AND start_datetime <= :p1 AND end_datetime >= :p1
+                 WHERE pause_group_id = :p0 AND start_datetime <= :p1 AND end_datetime > :p1
                  ORDER BY end_datetime DESC LIMIT 1',
                 [$gid, $currentDatetime]
             );
