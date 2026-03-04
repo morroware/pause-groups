@@ -62,8 +62,8 @@ try {
         echo "    {$a['time']} - {$a['action']} - {$a['group_name']} ({$a['source']})\n";
     }
 
-    // Step 4: Queue at jobs
-    echo "Queuing at jobs...\n";
+    // Step 4: Queue at jobs (if available on this host)
+    echo "Queuing at jobs (or fallback mode if at/atrm unavailable)...\n";
     Scheduler::queueAtJobs($today);
     echo "  Done.\n";
 

@@ -207,10 +207,12 @@ class Scheduler {
             [$date]
         );
 
-        // Cancel at jobs
-        foreach ($pending as $action) {
-            if (!empty($action['at_job_id'])) {
-                self::cancelAtJob($action['at_job_id']);
+        // Cancel at jobs when scheduler support exists.
+        if (self::hasAtScheduler()) {
+            foreach ($pending as $action) {
+                if (!empty($action['at_job_id'])) {
+                    self::cancelAtJob($action['at_job_id']);
+                }
             }
         }
 
@@ -230,6 +232,13 @@ class Scheduler {
 
         if ($date === null) {
             $date = date('Y-m-d');
+        }
+
+        // Portable fallback: if `at` is unavailable (common on shared hosting),
+        // actions remain in scheduled_actions and are executed by cron_watchdog
+        // / API missed-action checks once their scheduled_time has passed.
+        if (!self::hasAtScheduler()) {
+            return;
         }
 
         $actions = DB::query(
@@ -613,6 +622,27 @@ class Scheduler {
     // -----------------------------------------------
     // At Job Management
     // -----------------------------------------------
+
+    /**
+     * Detect whether system `at` scheduling is available.
+     */
+    private static function hasAtScheduler(): bool {
+        static $hasAt = null;
+        if ($hasAt !== null) {
+            return $hasAt;
+        }
+
+        $at = [];
+        $atrm = [];
+        $atCode = 1;
+        $atrmCode = 1;
+        exec('command -v at 2>/dev/null', $at, $atCode);
+        exec('command -v atrm 2>/dev/null', $atrm, $atrmCode);
+
+        $hasAt = ($atCode === 0 && !empty($at) && $atrmCode === 0 && !empty($atrm));
+        return $hasAt;
+    }
+
 
     /**
      * Parse at job ID from at command output.
