@@ -123,6 +123,26 @@ class Scheduler {
                 }
             }
 
+            // Suppress schedule transitions that fall during an active override window.
+            // Overrides take priority for their entire duration, not just at their
+            // exact start/end times. Any recurring-schedule transition that would
+            // fire while an override is active must be dropped so it cannot
+            // contradict the override (e.g. an unpause from a schedule ending
+            // while a pause-override is still active).
+            $filtered = [];
+            foreach ($transitions as $t) {
+                if ($t['source'] === 'schedule') {
+                    $checkTime = $date . ' ' . $t['time'];
+                    foreach ($overrides as $override) {
+                        if ($override['start_datetime'] <= $checkTime && $override['end_datetime'] > $checkTime) {
+                            continue 2; // Skip this schedule transition
+                        }
+                    }
+                }
+                $filtered[] = $t;
+            }
+            $transitions = $filtered;
+
             // Sort by time, then by priority (override > schedule)
             usort($transitions, function ($a, $b) {
                 $cmp = strcmp($a['time'], $b['time']);
@@ -333,6 +353,54 @@ class Scheduler {
         }
 
         return $summary;
+    }
+
+    /**
+     * Enforce the desired state for a single group at the current time.
+     * Used after override changes that require immediate state correction.
+     */
+    public static function enforceGroupState(int $groupId): array {
+        $tz = DB::getConfig('timezone') ?? DEFAULT_TIMEZONE;
+        date_default_timezone_set($tz);
+
+        $now = new DateTime('now', new DateTimeZone($tz));
+        $todayDow = (int)$now->format('w');
+        $nowStr = $now->format('Y-m-d H:i');
+        $nowTime = $now->format('H:i');
+
+        // Highest-priority rule: active override wins.
+        $activeOverride = DB::queryOne(
+            'SELECT action FROM schedule_overrides
+             WHERE pause_group_id = :p0 AND start_datetime <= :p1 AND end_datetime > :p1
+             ORDER BY start_datetime DESC, id DESC LIMIT 1',
+            [$groupId, $nowStr]
+        );
+
+        $desiredAction = 'unpause';
+        $source = 'schedule';
+
+        if ($activeOverride) {
+            $desiredAction = $activeOverride['action'];
+            $source = 'override';
+        } else {
+            $activeSchedule = DB::queryOne(
+                'SELECT id FROM schedules
+                 WHERE pause_group_id = :p0 AND day_of_week = :p1 AND is_active = 1
+                   AND start_time <= :p2 AND end_time > :p2
+                 LIMIT 1',
+                [$groupId, $todayDow, $nowTime]
+            );
+            if ($activeSchedule) {
+                $desiredAction = 'pause';
+                $source = 'schedule';
+            }
+        }
+
+        return self::executeStateChange(
+            $groupId,
+            $desiredAction === 'pause' ? 'paused' : 'enabled',
+            $source
+        );
     }
 
     /**
