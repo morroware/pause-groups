@@ -155,10 +155,31 @@ function deleteOverride(int $overrideId): void {
         return;
     }
 
+    $groupId = (int)$existing['pause_group_id'];
+
+    // Check if this override is currently active before deleting
+    $tz = DB::getConfig('timezone') ?? DEFAULT_TIMEZONE;
+    $now = new DateTime('now', new DateTimeZone($tz));
+    $nowStr = $now->format('Y-m-d H:i');
+    $wasActive = ($existing['start_datetime'] <= $nowStr && $existing['end_datetime'] > $nowStr);
+
     DB::execute('DELETE FROM schedule_overrides WHERE id = :p0', [$overrideId]);
 
-    // Replan today
+    // Replan today (updates future at-jobs)
     triggerReplan();
+
+    // If the override was active, immediately enforce the correct state
+    // so games don't stay in the override's state until the watchdog runs
+    if ($wasActive) {
+        if (file_exists(__DIR__ . '/../lib/scheduler.php')) {
+            require_once __DIR__ . '/../lib/scheduler.php';
+            try {
+                Scheduler::enforceGroupState($groupId);
+            } catch (Exception $e) {
+                error_log('State enforcement after override delete failed: ' . $e->getMessage());
+            }
+        }
+    }
 
     echo json_encode(['success' => true]);
 }
