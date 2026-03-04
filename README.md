@@ -8,12 +8,23 @@ A web application for scheduling and managing pause/unpause operations on arcade
 | PHP 7.4+ | Runtime (CLI and web) |
 | SQLite3 extension | Database |
 | OpenSSL extension | AES-256-CBC credential encryption |
+| mbstring extension | Installer/runtime string handling |
 | cURL extension | CenterEdge API communication |
-| Linux `at` command | Scheduled action execution |
+| Linux `at` + `atrm` commands (optional) | Native per-action queueing; fallback mode works without these |
 | Apache or Nginx | Web server (with PHP-FPM or mod_php) |
-| Cron daemon | Daily schedule planning |
+| Cron daemon (recommended) | Reliable planning + watchdog execution |
 
 No external PHP dependencies. Everything uses the standard library.
+
+## Hosting Compatibility
+
+This app is designed to run across common environments:
+
+- **cPanel/shared hosting**: run with PHP + SQLite + cron. If `at` is unavailable, schedules still execute through `cron_watchdog.php` (minute cadence) and missed-action checks.
+- **VPS / dedicated Linux**: use both cron jobs plus `at`/`atrm` for native queued execution.
+- **Raspberry Pi (Ubuntu Server)**: same as VPS; install `at` if desired for native queueing.
+
+In short: `at` improves execution precision, but it is **not required** for the application to function.
 
 ## Installation
 
@@ -36,14 +47,16 @@ php install.php --reset
 
 ### Cron Setup
 
-Use the following crontab entries (project path: `/var/www/html/ce/pause-groups-main/`):
+Use the following crontab entries (project path example: `/var/www/html/ce/pause-groups-main/`):
 
 ```
-0 0 * * * /sbin/reboot
-@reboot dhclient -v
 * * * * * /usr/bin/php /var/www/html/ce/pause-groups-main/cron_watchdog.php >> /var/www/html/ce/pause-groups-main/data/watchdog.log 2>&1
 5 0 * * * /usr/bin/php /var/www/html/ce/pause-groups-main/cron.php >> /var/www/html/ce/pause-groups-main/data/cron.log 2>&1
 ```
+
+`cron_watchdog.php` is a reliability safety net (missed-action execution, state enforcement, and at-job requeue). `cron.php` performs the daily plan build and queueing.
+
+If `at`/`atrm` are not installed, keep the watchdog cron enabled (every minute). In that mode, due actions are executed when watchdog runs rather than through native `at` jobs.
 
 ## Architecture
 
@@ -106,13 +119,13 @@ The cron job runs once per day and:
 
 1. Syncs the game list from CenterEdge into a local cache.
 2. Computes all scheduled actions for the day by merging recurring schedules with active overrides.
-3. Queues each action as a Linux `at` job timed to its scheduled execution.
+3. Queues each action as a Linux `at` job when available; otherwise actions are executed by watchdog/missed-action processing once due.
 
 When schedules or overrides are modified through the UI, the system replans the remainder of the day automatically.
 
 ### Action Execution
 
-Each `at` job invokes `run_action.php`, which:
+When `at` is available, each `at` job invokes `run_action.php`. In fallback mode (no `at`), the watchdog/missed-action path invokes the same scheduler logic. Core execution behavior is:
 
 1. Resolves the pause group to a list of game IDs.
 2. Checks current game states from the local cache.
@@ -177,6 +190,6 @@ Start a local server:
 php -S localhost:8000
 ```
 
-Run the installer, configure CenterEdge API credentials through the settings page, and trigger a game sync. The application uses hash-based routing (`#/dashboard`, `#/groups`, etc.).
+Run the installer, configure CenterEdge API credentials through the settings page, and trigger a game sync. The installer now preflights required PHP extensions and warns if `at`/`atrm` are unavailable. The application uses hash-based routing (`#/dashboard`, `#/groups`, etc.).
 
 There is no automated test suite.

@@ -14,6 +14,7 @@ $requiredExtensions = [
     'sqlite3' => 'sudo apt-get install php-sqlite3',
     'openssl' => 'sudo apt-get install php-openssl (often included by default)',
     'mbstring' => 'sudo apt-get install php-mbstring',
+    'curl' => 'sudo apt-get install php-curl',
 ];
 
 $missing = [];
@@ -52,11 +53,24 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/lib/db.php';
 require_once __DIR__ . '/lib/crypto.php';
 
+function commandExists(string $command): bool {
+    $output = [];
+    $exitCode = 1;
+    exec('command -v ' . escapeshellarg($command) . ' 2>/dev/null', $output, $exitCode);
+    return $exitCode === 0 && !empty($output);
+}
+
 // ─── CLI Mode ───────────────────────────────────────────────────────────────
 if ($isCli) {
     echo "╔══════════════════════════════════════╗\n";
     echo "║  Pause Group Automation — Setup      ║\n";
     echo "╚══════════════════════════════════════╝\n\n";
+
+    if (!commandExists('at') || !commandExists('atrm')) {
+        echo "[WARN] 'at' scheduler binaries (at/atrm) not found.\n";
+        echo "       Fallback mode will still run schedules via watchdog cron.\n";
+        echo "       Optional install for native queueing: sudo apt-get install at\n\n";
+    }
 
     // Handle --reset flag: wipe existing database to start fresh
     if (in_array('--reset', $argv ?? [], true)) {
@@ -201,8 +215,9 @@ if ($isCli) {
     // Step 6: Cron setup guidance
     echo "\n--- Cron Setup ---\n";
     echo "Add the following to your crontab (crontab -e):\n\n";
+    echo "  * * * * * /usr/bin/php " . __DIR__ . "/cron_watchdog.php >> " . dirname(DB_PATH) . "/watchdog.log 2>&1\n";
     echo "  5 0 * * * /usr/bin/php " . __DIR__ . "/cron.php >> " . dirname(DB_PATH) . "/cron.log 2>&1\n\n";
-    echo "This runs the daily scheduler at 00:05.\n";
+    echo "The watchdog runs every minute, and the daily planner runs at 00:05.\n";
 
     // Step 7: Set web server ownership
     echo "\n--- File Permissions ---\n";
@@ -230,6 +245,7 @@ header('Content-Type: text/html; charset=utf-8');
 $step = $_POST['step'] ?? 'check';
 $message = '';
 $messageType = '';
+$atAvailable = commandExists('at') && commandExists('atrm');
 
 // Process POST actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -337,6 +353,10 @@ if ($hasAdmin && $step !== 'done') {
 
     <?php if ($message): ?>
         <div class="msg <?= htmlspecialchars($messageType) ?>"><?= htmlspecialchars($message) ?></div>
+    <?php endif; ?>
+
+    <?php if (!$atAvailable): ?>
+        <div class="msg">System dependency check: <code>at</code>/<code>atrm</code> not found. The app can still run via watchdog/manual cron fallback, but timed jobs will not be queued as native <code>at</code> tasks.</div>
     <?php endif; ?>
 
     <?php if ($step === 'already_setup'): ?>

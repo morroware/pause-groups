@@ -1,6 +1,6 @@
 # Pause Group Automation Audit (Reliability + Security)
 
-Date: 2026-02-25
+Date: 2026-03-04
 Scope reviewed: API routes, auth/session handling, scheduler/cron flow, installer behavior, crypto/storage patterns, and operational docs present in repository.
 
 ## Executive Summary
@@ -11,7 +11,9 @@ Overall, the project has a solid baseline for a small internal operations tool:
 - CLI-only guards on job runner scripts.
 - Locking in cron/runner to reduce concurrency races.
 
-The highest-impact issue identified was an installer hardening gap that could allow **unauthenticated creation of additional admin users** if `install.php` remained web-accessible after first setup. This is fixed in this branch.
+The highest-impact issue identified in earlier review was an installer hardening gap that could allow **unauthenticated creation of additional admin users** if `install.php` remained web-accessible after first setup. This is fixed in this branch.
+
+This review additionally found reliability risks in setup validation: installer prerequisites did not verify the required `curl` extension and did not warn about missing `at` scheduler binaries. Both are now addressed, and scheduler execution now supports fallback mode when `at` is unavailable.
 
 ## What Was Fixed
 
@@ -22,6 +24,14 @@ The highest-impact issue identified was an installer hardening gap that could al
 **Impact:** If `install.php` was left reachable (common in rushed deployments), an attacker could create an admin account without authentication.
 
 **Fix:** Added an early guard in POST handling to block all installer actions once any admin exists.
+
+### 2) Installer prerequisite coverage for runtime dependencies (High)
+
+**Issue:** Setup scripts did not verify that `curl` was installed, despite being required for all CenterEdge API calls. They also did not surface missing `at`/`atrm` scheduler binaries.
+
+**Impact:** Deployments could appear successful but fail at runtime when syncing games or scheduling actions.
+
+**Fix:** Updated `install.php` and `fresh_install.php` prerequisite checks to require `curl`, and added explicit warnings when `at`/`atrm` are missing.
 
 ## Remaining Findings (Prioritized)
 
@@ -45,8 +55,8 @@ The highest-impact issue identified was an installer hardening gap that could al
 2. **Authentication/session hardening opportunities.**
    - Consider setting `session.use_only_cookies=1` and a strict cookie secure policy in production (HTTPS-only deployments).
 
-3. **Operational dependencies not preflighted by installer.**
-   - Scheduler relies on `at`/`atrm`; installer could verify presence and clearly report if missing.
+3. **Shared-hosting timer precision depends on cron cadence when `at` is unavailable.**
+   - Fallback mode executes due actions via watchdog/missed-action checks; use 1-minute cron for best reliability on hosts without `at`.
 
 ### Low Priority
 
@@ -86,4 +96,3 @@ The highest-impact issue identified was an installer hardening gap that could al
 - [ ] Cron configured + log file monitored.
 - [ ] Alerting added for repeated API failures and action execution errors.
 - [ ] Backup/restore tested on a non-production copy.
-

@@ -40,7 +40,7 @@ function out(string $msg, string $type = 'info'): void {
 $webOutput = [];
 
 // ─── Prerequisite Checks ─────────────────────────────────────────────────
-$requiredExtensions = ['sqlite3', 'openssl', 'mbstring'];
+$requiredExtensions = ['sqlite3', 'openssl', 'mbstring', 'curl'];
 $missing = [];
 foreach ($requiredExtensions as $ext) {
     if (!extension_loaded($ext)) {
@@ -53,6 +53,17 @@ if ($missing) {
     out('Install them and retry. Example: sudo apt-get install php-' . implode(' php-', $missing), 'info');
     if (!$isCli) { renderWeb($webOutput); }
     exit(1);
+}
+
+function commandExists(string $command): bool {
+    $output = [];
+    $exitCode = 1;
+    exec('command -v ' . escapeshellarg($command) . ' 2>/dev/null', $output, $exitCode);
+    return $exitCode === 0 && !empty($output);
+}
+
+if (!commandExists('at') || !commandExists('atrm')) {
+    out("'at' binaries (at/atrm) not found. Fallback mode still works via watchdog cron; install 'at' for native queueing.", 'warn');
 }
 
 // ─── Step 1: Remove old database ─────────────────────────────────────────
