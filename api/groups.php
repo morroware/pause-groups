@@ -67,17 +67,27 @@ function listGroups(): void {
          ORDER BY g.name ASC'
     );
 
-    // Compute effective state for each group based on game cache
+    // Enrich each group with live state, schedule context, and override info
     require_once __DIR__ . '/../lib/centeredge_client.php';
     require_once __DIR__ . '/../lib/scheduler.php';
 
+    $tz = DB::getConfig('timezone') ?? DEFAULT_TIMEZONE;
+    date_default_timezone_set($tz);
+    $now = new DateTime();
+    $todayDow = (int)$now->format('w');
+    $currentTime = $now->format('H:i:s');
+    $currentDatetime = $now->format('Y-m-d H:i:s');
+
     foreach ($groups as &$group) {
-        $gameIds = Scheduler::resolveGroupGames((int)$group['id']);
+        $gid = (int)$group['id'];
+
+        // Game stats from cache
+        $gameIds = Scheduler::resolveGroupGames($gid);
         $enabledCount = 0;
         $pausedCount = 0;
         $oosCount = 0;
-        foreach ($gameIds as $gid) {
-            $cached = DB::queryOne('SELECT operation_status FROM game_state_cache WHERE game_id = :p0', [$gid]);
+        foreach ($gameIds as $gameId) {
+            $cached = DB::queryOne('SELECT operation_status FROM game_state_cache WHERE game_id = :p0', [$gameId]);
             if (!$cached) continue;
             if ($cached['operation_status'] === 'enabled') $enabledCount++;
             elseif ($cached['operation_status'] === 'paused') $pausedCount++;
@@ -93,6 +103,40 @@ function listGroups(): void {
             'paused' => $pausedCount,
             'out_of_service' => $oosCount,
         ];
+
+        // Next scheduled transition today
+        $nextTransition = null;
+        if ($group['is_active']) {
+            $todaySchedules = DB::query(
+                'SELECT start_time, end_time FROM schedules
+                 WHERE pause_group_id = :p0 AND day_of_week = :p1 AND is_active = 1
+                 ORDER BY start_time ASC',
+                [$gid, $todayDow]
+            );
+            foreach ($todaySchedules as $sched) {
+                if ($sched['start_time'] > $currentTime) {
+                    $nextTransition = ['time' => $sched['start_time'], 'action' => 'pause'];
+                    break;
+                }
+                if ($sched['end_time'] > $currentTime) {
+                    $nextTransition = ['time' => $sched['end_time'], 'action' => 'unpause'];
+                    break;
+                }
+            }
+        }
+        $group['next_transition'] = $nextTransition;
+
+        // Active override
+        $activeOverride = null;
+        if ($group['is_active']) {
+            $activeOverride = DB::queryOne(
+                'SELECT name, action, end_datetime FROM schedule_overrides
+                 WHERE pause_group_id = :p0 AND start_datetime <= :p1 AND end_datetime >= :p1
+                 ORDER BY end_datetime DESC LIMIT 1',
+                [$gid, $currentDatetime]
+            );
+        }
+        $group['active_override'] = $activeOverride ?: null;
     }
     unset($group);
 
