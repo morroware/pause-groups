@@ -1,5 +1,5 @@
 /**
- * Dashboard page: game status overview, stats, active schedules/overrides.
+ * Dashboard page: game status overview, group controls, active overrides.
  */
 (function() {
     App.registerRoute('#/dashboard', { render: renderDashboard });
@@ -22,8 +22,16 @@
         const statsGrid = App.el('div', { className: 'stats-grid', id: 'stats-grid' });
         container.appendChild(statsGrid);
 
+        // Group quick controls
+        container.appendChild(App.el('div', { className: 'card mt-2', id: 'group-controls-card' }, [
+            App.el('div', { className: 'card-header' }, [
+                App.el('div', { className: 'card-title', textContent: 'Quick Controls' })
+            ]),
+            App.el('div', { id: 'group-controls', className: 'group-controls-grid' })
+        ]));
+
         // Game grid
-        container.appendChild(App.el('div', { className: 'card' }, [
+        container.appendChild(App.el('div', { className: 'card mt-2' }, [
             App.el('div', { className: 'card-header' }, [
                 App.el('div', { className: 'card-title', textContent: 'Game Status' }),
                 App.el('input', {
@@ -54,13 +62,15 @@
 
     async function loadDashboard() {
         try {
-            const [gamesData, overridesData] = await Promise.all([
+            const [gamesData, overridesData, groupsData] = await Promise.all([
                 API.get('games'),
-                API.get('overrides')
+                API.get('overrides'),
+                API.get('groups')
             ]);
 
             allGames = gamesData.games || [];
             renderStats(allGames);
+            renderGroupControls(groupsData.groups || []);
             renderGameGrid(allGames);
             renderActiveOverrides(overridesData.active || []);
 
@@ -98,6 +108,101 @@
                 App.el('div', { className: 'stat-value ' + s.cls, textContent: String(s.value) })
             ]));
         });
+    }
+
+    function renderGroupControls(groups) {
+        const el = document.getElementById('group-controls');
+        if (!el) return;
+        el.innerHTML = '';
+
+        const activeGroups = groups.filter(g => g.is_active == 1);
+
+        if (activeGroups.length === 0) {
+            el.appendChild(App.el('p', { className: 'text-muted text-sm', textContent: 'No active groups configured.' }));
+            return;
+        }
+
+        activeGroups.forEach(group => {
+            const stats = group.game_stats || {};
+            const state = group.effective_state || 'empty';
+
+            const stateLabel = state === 'paused' ? 'Paused'
+                : state === 'enabled' ? 'Running'
+                : state === 'mixed' ? 'Mixed'
+                : 'No games';
+
+            const stateCls = state === 'paused' ? 'text-warning'
+                : state === 'enabled' ? 'text-success'
+                : state === 'mixed' ? 'text-secondary'
+                : 'text-muted';
+
+            const isPaused = state === 'paused';
+            const isEmpty = state === 'empty';
+
+            const card = App.el('div', {
+                className: 'group-control-card',
+                'data-state': state
+            }, [
+                App.el('div', { className: 'group-control-info' }, [
+                    App.el('div', { className: 'group-control-name', textContent: group.name }),
+                    App.el('div', { className: 'group-control-meta' }, [
+                        App.el('span', { className: stateCls, textContent: stateLabel }),
+                        stats.total > 0 ? App.el('span', {
+                            className: 'text-muted',
+                            textContent: ' \u2022 ' + stats.total + ' game' + (stats.total !== 1 ? 's' : '')
+                                + (stats.out_of_service > 0 ? ' (' + stats.out_of_service + ' OOS)' : '')
+                        }) : null
+                    ].filter(Boolean))
+                ]),
+                App.el('div', { className: 'group-control-actions' }, [
+                    App.el('button', {
+                        className: 'btn btn-sm ' + (isPaused ? 'btn-success' : 'btn-secondary'),
+                        textContent: 'Unpause',
+                        disabled: isEmpty || state === 'enabled',
+                        onClick: () => doGroupAction(group.id, 'unpause', group.name)
+                    }),
+                    App.el('button', {
+                        className: 'btn btn-sm ' + (!isPaused && !isEmpty ? 'btn-warning' : 'btn-secondary'),
+                        textContent: 'Pause',
+                        disabled: isEmpty || state === 'paused',
+                        onClick: () => doGroupAction(group.id, 'pause', group.name)
+                    })
+                ])
+            ]);
+            el.appendChild(card);
+        });
+    }
+
+    async function doGroupAction(groupId, action, groupName) {
+        const verb = action === 'pause' ? 'Pause' : 'Unpause';
+        const confirmed = await App.confirm(verb + ' all games in "' + groupName + '"?');
+        if (!confirmed) return;
+
+        // Disable all group control buttons during the action
+        const btns = document.querySelectorAll('.group-control-actions .btn');
+        btns.forEach(b => b.disabled = true);
+
+        try {
+            const result = await API.post('groups/' + groupId + '/' + action);
+            const changed = result.changed || 0;
+            const skipped = result.skipped || 0;
+            const errors = result.errors || 0;
+
+            if (errors > 0) {
+                App.toast(verb + ' partially failed: ' + changed + ' changed, ' + errors + ' errors.', 'warning');
+            } else if (changed > 0) {
+                App.toast(groupName + ' ' + action + 'd successfully (' + changed + ' game' + (changed !== 1 ? 's' : '') + ').', 'success');
+            } else {
+                App.toast('All games already ' + action + 'd.', 'info');
+            }
+
+            await loadDashboard();
+        } catch (err) {
+            App.toast(verb + ' failed: ' + err.message, 'error');
+        } finally {
+            const btnsAfter = document.querySelectorAll('.group-control-actions .btn');
+            btnsAfter.forEach(b => b.disabled = false);
+        }
     }
 
     function renderGameGrid(games) {

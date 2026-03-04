@@ -1,11 +1,13 @@
 <?php
 /**
- * API: Pause group CRUD.
- * GET    /api/groups        — List all groups with member counts
- * GET    /api/groups/{id}   — Single group with categories + games
- * POST   /api/groups        — Create group
- * PUT    /api/groups/{id}   — Update group
- * DELETE /api/groups/{id}   — Delete group
+ * API: Pause group CRUD + manual actions.
+ * GET    /api/groups              — List all groups with member counts and current state
+ * GET    /api/groups/{id}         — Single group with categories + games
+ * POST   /api/groups              — Create group
+ * POST   /api/groups/{id}/pause   — Immediately pause all games in group
+ * POST   /api/groups/{id}/unpause — Immediately unpause all games in group
+ * PUT    /api/groups/{id}         — Update group
+ * DELETE /api/groups/{id}         — Delete group
  */
 
 require_once __DIR__ . '/../lib/validator.php';
@@ -14,6 +16,13 @@ function handleGroups(string $method, array $parts, ?array $input): void {
     Auth::requireAuth();
 
     $groupId = isset($parts[0]) && is_numeric($parts[0]) ? (int)$parts[0] : null;
+    $action = $parts[1] ?? null;
+
+    // Handle POST /api/groups/{id}/pause or /unpause
+    if ($method === 'POST' && $groupId && in_array($action, ['pause', 'unpause'], true)) {
+        manualGroupAction($groupId, $action);
+        return;
+    }
 
     switch ($method) {
         case 'GET':
@@ -57,7 +66,65 @@ function listGroups(): void {
          FROM pause_groups g
          ORDER BY g.name ASC'
     );
+
+    // Compute effective state for each group based on game cache
+    require_once __DIR__ . '/../lib/centeredge_client.php';
+    require_once __DIR__ . '/../lib/scheduler.php';
+
+    foreach ($groups as &$group) {
+        $gameIds = Scheduler::resolveGroupGames((int)$group['id']);
+        $enabledCount = 0;
+        $pausedCount = 0;
+        $oosCount = 0;
+        foreach ($gameIds as $gid) {
+            $cached = DB::queryOne('SELECT operation_status FROM game_state_cache WHERE game_id = :p0', [$gid]);
+            if (!$cached) continue;
+            if ($cached['operation_status'] === 'enabled') $enabledCount++;
+            elseif ($cached['operation_status'] === 'paused') $pausedCount++;
+            elseif ($cached['operation_status'] === 'outOfService') $oosCount++;
+        }
+        $total = $enabledCount + $pausedCount + $oosCount;
+        $group['effective_state'] = $total === 0 ? 'empty'
+            : ($pausedCount > 0 && $enabledCount === 0 ? 'paused'
+            : ($enabledCount > 0 && $pausedCount === 0 ? 'enabled' : 'mixed'));
+        $group['game_stats'] = [
+            'total' => $total,
+            'enabled' => $enabledCount,
+            'paused' => $pausedCount,
+            'out_of_service' => $oosCount,
+        ];
+    }
+    unset($group);
+
     echo json_encode(['groups' => $groups]);
+}
+
+/**
+ * Immediately pause or unpause all games in a group.
+ */
+function manualGroupAction(int $groupId, string $action): void {
+    $group = DB::queryOne('SELECT id, name, is_active FROM pause_groups WHERE id = :p0', [$groupId]);
+    if (!$group) {
+        http_response_code(404);
+        echo json_encode(['error' => 'Group not found']);
+        return;
+    }
+
+    require_once __DIR__ . '/../lib/centeredge_client.php';
+    require_once __DIR__ . '/../lib/scheduler.php';
+
+    $results = Scheduler::executeImmediate($groupId, $action, 'manual');
+
+    echo json_encode([
+        'success' => empty($results['errors']),
+        'action'  => $action,
+        'group_id' => $groupId,
+        'group_name' => $group['name'],
+        'changed' => count($results['changed']),
+        'skipped' => count($results['skipped']),
+        'errors'  => count($results['errors']),
+        'details' => $results,
+    ]);
 }
 
 function getGroup(int $groupId): void {
