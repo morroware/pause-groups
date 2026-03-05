@@ -67,6 +67,31 @@ try {
     Scheduler::queueAtJobs($today);
     echo "  Done.\n";
 
+    // Step 5: Purge old data to prevent unbounded growth
+    echo "Purging old data...\n";
+    try {
+        $purged = Scheduler::purgeOldData();
+        echo "  Purged: {$purged['action_log_purged']} log entries, "
+            . "{$purged['scheduled_actions_purged']} old actions, "
+            . "{$purged['overrides_purged']} expired overrides.\n";
+    } catch (Exception $e) {
+        echo "  WARNING: Data purge failed: " . $e->getMessage() . "\n";
+    }
+
+    // Step 6: Rotate log files (keep last 500KB)
+    foreach (['cron.log', 'watchdog.log'] as $logName) {
+        $logPath = $dataDir . '/' . $logName;
+        if (file_exists($logPath) && filesize($logPath) > 512000) {
+            $content = file_get_contents($logPath);
+            // Keep last 256KB
+            file_put_contents($logPath, substr($content, -262144));
+            echo "  Rotated $logName\n";
+        }
+    }
+
+    // Step 7: Write heartbeat for external monitoring
+    Scheduler::writeHeartbeat('cron');
+
     echo "[" . date('c') . "] === Daily plan complete ===\n\n";
 
 } catch (Exception $e) {

@@ -1,4 +1,6 @@
 data/*.db
 data/*.lock
 data/*.log
+data/.heartbeat_*
+data/.last_missed_check
 *.log

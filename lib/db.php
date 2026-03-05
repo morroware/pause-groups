@@ -17,7 +17,7 @@ class DB {
 
             self::$instance = new SQLite3(DB_PATH);
             self::$instance->enableExceptions(true);
-            self::$instance->busyTimeout(5000);
+            self::$instance->busyTimeout(30000);
             self::$instance->exec('PRAGMA journal_mode=WAL');
             self::$instance->exec('PRAGMA foreign_keys=ON');
             self::$instance->exec('PRAGMA synchronous=NORMAL');

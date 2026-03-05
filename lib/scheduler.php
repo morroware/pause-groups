@@ -295,15 +295,24 @@ class Scheduler {
         // Acquire the scheduler lock so we don't race with run_action.php
         // or cron_watchdog.php while clearing / recreating actions.
         $lockFh = fopen(LOCK_FILE, 'c');
+        if (!$lockFh) {
+            error_log('replanToday: could not open lock file');
+            return;
+        }
+
         $lockHeld = false;
-        if ($lockFh) {
-            for ($i = 0; $i < 6; $i++) { // up to 30s
-                if (flock($lockFh, LOCK_EX | LOCK_NB)) {
-                    $lockHeld = true;
-                    break;
-                }
-                usleep(5000000); // 5s
+        for ($i = 0; $i < 6; $i++) { // up to 30s
+            if (flock($lockFh, LOCK_EX | LOCK_NB)) {
+                $lockHeld = true;
+                break;
             }
+            usleep(5000000); // 5s
+        }
+
+        if (!$lockHeld) {
+            fclose($lockFh);
+            error_log('replanToday: could not acquire lock after 30s, skipping to avoid race condition');
+            return;
         }
 
         try {
@@ -311,12 +320,8 @@ class Scheduler {
             self::planDay($today);
             self::queueAtJobs($today);
         } finally {
-            if ($lockHeld && $lockFh) {
-                flock($lockFh, LOCK_UN);
-            }
-            if ($lockFh) {
-                fclose($lockFh);
-            }
+            flock($lockFh, LOCK_UN);
+            fclose($lockFh);
         }
     }
 
@@ -738,6 +743,55 @@ class Scheduler {
         $output = [];
         exec('atrm ' . escapeshellarg($jobId) . ' 2>&1', $output, $exitCode);
         return $exitCode === 0;
+    }
+
+    // -----------------------------------------------
+    // Data Maintenance
+    // -----------------------------------------------
+
+    /**
+     * Purge old data to prevent unbounded database growth.
+     * Called by the daily cron job. Keeps 90 days of action_log,
+     * 30 days of executed scheduled_actions, and removes expired overrides
+     * older than 90 days.
+     */
+    public static function purgeOldData(int $logRetentionDays = 90, int $actionRetentionDays = 30, int $overrideRetentionDays = 90): array {
+        $summary = [];
+
+        // Purge old action_log entries
+        $cutoff = date('Y-m-d H:i:s', strtotime("-$logRetentionDays days"));
+        $deleted = DB::execute(
+            'DELETE FROM action_log WHERE timestamp < :p0',
+            [$cutoff]
+        );
+        $summary['action_log_purged'] = $deleted;
+
+        // Purge old executed scheduled_actions (keep pending ones regardless of age)
+        $cutoff = date('Y-m-d', strtotime("-$actionRetentionDays days"));
+        $deleted = DB::execute(
+            'DELETE FROM scheduled_actions WHERE scheduled_date < :p0 AND executed != 0',
+            [$cutoff]
+        );
+        $summary['scheduled_actions_purged'] = $deleted;
+
+        // Purge very old expired overrides
+        $cutoff = date('Y-m-d H:i', strtotime("-$overrideRetentionDays days"));
+        $deleted = DB::execute(
+            'DELETE FROM schedule_overrides WHERE end_datetime < :p0',
+            [$cutoff]
+        );
+        $summary['overrides_purged'] = $deleted;
+
+        return $summary;
+    }
+
+    /**
+     * Write a heartbeat file so external monitoring can detect if cron is alive.
+     * The file contains the last successful run timestamp in ISO 8601.
+     */
+    public static function writeHeartbeat(string $type = 'cron'): void {
+        $heartbeatFile = dirname(LOCK_FILE) . "/.heartbeat_$type";
+        file_put_contents($heartbeatFile, date('c'));
     }
 
     // -----------------------------------------------
