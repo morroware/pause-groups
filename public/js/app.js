@@ -152,6 +152,12 @@ const App = {
         document.body.classList.toggle('app-guest', !this.currentUser);
     },
 
+
+    setAppStateClass() {
+        document.body.classList.toggle('app-authenticated', !!this.currentUser);
+        document.body.classList.toggle('app-guest', !this.currentUser);
+    },
+
     matchRoute(pattern, hash) {
         // Convert #/groups/:id to regex
         const parts = pattern.split('/');
