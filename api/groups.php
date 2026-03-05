@@ -24,6 +24,12 @@ function handleGroups(string $method, array $parts, ?array $input): void {
         return;
     }
 
+    // Handle POST /api/groups/{id}/enforce — immediate state enforcement
+    if ($method === 'POST' && $groupId && $action === 'enforce') {
+        enforceGroupAction($groupId);
+        return;
+    }
+
     switch ($method) {
         case 'GET':
             if ($groupId) {
@@ -172,6 +178,36 @@ function manualGroupAction(int $groupId, string $action): void {
         'changed' => count($results['changed']),
         'skipped' => count($results['skipped']),
         'errors'  => count($results['errors']),
+        'details' => $results,
+    ]);
+}
+
+/**
+ * Immediately enforce the correct state for a group based on current
+ * schedules and overrides.  Called by the frontend when an override
+ * expires so the transition happens within seconds rather than waiting
+ * for the next watchdog cycle.
+ */
+function enforceGroupAction(int $groupId): void {
+    $group = DB::queryOne('SELECT id, name, is_active FROM pause_groups WHERE id = :p0', [$groupId]);
+    if (!$group) {
+        http_response_code(404);
+        echo json_encode(['error' => 'Group not found']);
+        return;
+    }
+
+    require_once __DIR__ . '/../lib/centeredge_client.php';
+    require_once __DIR__ . '/../lib/scheduler.php';
+
+    $results = Scheduler::enforceGroupState($groupId);
+
+    echo json_encode([
+        'success' => empty($results['errors']),
+        'group_id' => $groupId,
+        'group_name' => $group['name'],
+        'changed' => count($results['changed'] ?? []),
+        'skipped' => count($results['skipped'] ?? []),
+        'errors'  => count($results['errors'] ?? []),
         'details' => $results,
     ]);
 }

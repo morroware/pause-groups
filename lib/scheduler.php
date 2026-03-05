@@ -709,6 +709,104 @@ class Scheduler {
         }
     }
 
+    /**
+     * Enforce state for groups whose overrides expired recently.
+     * This is a fast, targeted check designed to run on every API call.
+     * Only queries the DB — no CenterEdge sync — so it adds minimal latency.
+     * If an override expired within the last $lookbackSeconds and the group's
+     * cached state doesn't match the desired state, it patches CenterEdge.
+     */
+    public static function enforceExpiredOverrides(int $lookbackSeconds = 300): array {
+        $tz = DB::getConfig('timezone') ?? DEFAULT_TIMEZONE;
+        date_default_timezone_set($tz);
+
+        $now = new DateTime('now', new DateTimeZone($tz));
+        $nowStr = $now->format('Y-m-d H:i');
+        $nowTime = $now->format('H:i');
+        $todayDow = (int)$now->format('w');
+
+        $lookback = (clone $now)->modify("-{$lookbackSeconds} seconds")->format('Y-m-d H:i');
+
+        // Find overrides that expired recently (end_datetime is in the past but within lookback)
+        $expired = DB::query(
+            'SELECT DISTINCT pause_group_id FROM schedule_overrides
+             WHERE end_datetime <= :p0 AND end_datetime > :p1',
+            [$nowStr, $lookback]
+        );
+
+        if (empty($expired)) {
+            return ['groups_checked' => 0];
+        }
+
+        $summary = ['groups_checked' => 0, 'groups_enforced' => 0];
+
+        foreach ($expired as $row) {
+            $groupId = (int)$row['pause_group_id'];
+            $summary['groups_checked']++;
+
+            // Check if group is active
+            $group = DB::queryOne(
+                'SELECT id FROM pause_groups WHERE id = :p0 AND is_active = 1',
+                [$groupId]
+            );
+            if (!$group) continue;
+
+            // Determine desired state (same logic as enforceGroupState)
+            $activeOverride = DB::queryOne(
+                'SELECT action FROM schedule_overrides
+                 WHERE pause_group_id = :p0 AND start_datetime <= :p1 AND end_datetime > :p1
+                 ORDER BY start_datetime DESC, id DESC LIMIT 1',
+                [$groupId, $nowStr]
+            );
+
+            $desiredAction = 'pause';
+            $source = 'expired_override';
+
+            if ($activeOverride) {
+                $desiredAction = $activeOverride['action'];
+            } else {
+                $activeSchedule = DB::queryOne(
+                    'SELECT id FROM schedules
+                     WHERE pause_group_id = :p0 AND day_of_week = :p1 AND is_active = 1
+                       AND start_time <= :p2 AND end_time > :p2
+                     LIMIT 1',
+                    [$groupId, $todayDow, $nowTime]
+                );
+                if ($activeSchedule) {
+                    $desiredAction = 'unpause';
+                }
+            }
+
+            $desiredStatus = ($desiredAction === 'pause') ? 'paused' : 'enabled';
+
+            // Quick check: are any games in the wrong state? (cache-only, fast)
+            $gameIds = self::resolveGroupGames($groupId);
+            $needsEnforcement = false;
+            foreach ($gameIds as $gameId) {
+                $cached = DB::queryOne(
+                    'SELECT operation_status FROM game_state_cache WHERE game_id = :p0',
+                    [$gameId]
+                );
+                if ($cached && $cached['operation_status'] !== $desiredStatus
+                    && $cached['operation_status'] !== 'outOfService') {
+                    $needsEnforcement = true;
+                    break;
+                }
+            }
+
+            if ($needsEnforcement) {
+                try {
+                    self::executeStateChange($groupId, $desiredStatus, $source, true);
+                    $summary['groups_enforced']++;
+                } catch (Exception $e) {
+                    error_log("enforceExpiredOverrides: failed for group #$groupId: " . $e->getMessage());
+                }
+            }
+        }
+
+        return $summary;
+    }
+
     // -----------------------------------------------
     // At Job Management
     // -----------------------------------------------

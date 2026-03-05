@@ -1,11 +1,97 @@
 /**
  * Dashboard — Command Center for pause group automation.
+ *
+ * Polling strategy:
+ *   - Default: every 30 seconds
+ *   - Active override exists: every 10 seconds
+ *   - Override about to expire (< 2 min): every 5 seconds
+ *   - Override just expired: immediate enforce call + refresh
  */
 (function() {
     App.registerRoute('#/dashboard', { render: renderDashboard });
 
+    // Polling constants
+    var INTERVAL_DEFAULT = 30000;
+    var INTERVAL_OVERRIDE_ACTIVE = 10000;
+    var INTERVAL_OVERRIDE_EXPIRING = 5000;
+
+    // Module-level state
+    var allGames = [];
+    var refreshInterval = null;
+    var expiryTimers = [];
+    var currentInterval = INTERVAL_DEFAULT;
+
+    function scheduleNextPoll() {
+        if (refreshInterval) clearInterval(refreshInterval);
+        refreshInterval = setInterval(loadDashboard, currentInterval);
+    }
+
+    function adjustPollingRate(activeOverrides) {
+        var newInterval = INTERVAL_DEFAULT;
+
+        if (activeOverrides && activeOverrides.length > 0) {
+            var soonestMs = Infinity;
+            var now = Date.now();
+            activeOverrides.forEach(function(o) {
+                var endMs = new Date(o.end_datetime.replace(' ', 'T')).getTime();
+                var remaining = endMs - now;
+                if (remaining < soonestMs) soonestMs = remaining;
+            });
+
+            if (soonestMs <= 120000) {
+                newInterval = INTERVAL_OVERRIDE_EXPIRING;
+            } else {
+                newInterval = INTERVAL_OVERRIDE_ACTIVE;
+            }
+        }
+
+        if (newInterval !== currentInterval) {
+            currentInterval = newInterval;
+            scheduleNextPoll();
+        }
+    }
+
+    function scheduleExpiryTimers(activeOverrides) {
+        expiryTimers.forEach(function(t) { clearTimeout(t); });
+        expiryTimers = [];
+
+        if (!activeOverrides || activeOverrides.length === 0) return;
+
+        var now = Date.now();
+        activeOverrides.forEach(function(o) {
+            var endMs = new Date(o.end_datetime.replace(' ', 'T')).getTime();
+            var delay = endMs - now;
+
+            if (delay > 0 && delay < 3600000) {
+                // Fire right at expiry: call enforce endpoint then refresh
+                var timer = setTimeout(function() {
+                    onOverrideExpired(o);
+                }, delay + 1000); // +1s to ensure server sees it as expired
+                expiryTimers.push(timer);
+
+                // Follow-up refresh 3s after expiry for UI consistency
+                var timer2 = setTimeout(function() {
+                    loadDashboard();
+                }, delay + 3000);
+                expiryTimers.push(timer2);
+            }
+        });
+    }
+
+    async function onOverrideExpired(override) {
+        var groupId = override.pause_group_id;
+        if (groupId) {
+            try {
+                await API.post('groups/' + groupId + '/enforce');
+            } catch (err) {
+                // Enforcement failed — next poll will still trigger server-side safety net
+            }
+        }
+        await loadDashboard();
+    }
+
     function renderDashboard(container) {
-        let refreshInterval = null;
+        currentInterval = INTERVAL_DEFAULT;
 
         // Page header
         container.appendChild(App.el('div', { className: 'page-header' }, [
@@ -20,7 +106,7 @@
         ]));
 
         // Stats cards
-        const statsGrid = App.el('div', { className: 'stats-grid', id: 'stats-grid' });
+        var statsGrid = App.el('div', { className: 'stats-grid', id: 'stats-grid' });
         container.appendChild(statsGrid);
 
         // Group controls
@@ -52,30 +138,42 @@
         ]));
 
         loadDashboard();
-        refreshInterval = setInterval(loadDashboard, 60000);
+        scheduleNextPoll();
 
         return function cleanup() {
             if (refreshInterval) clearInterval(refreshInterval);
+            refreshInterval = null;
+            expiryTimers.forEach(function(t) { clearTimeout(t); });
+            expiryTimers = [];
         };
     }
 
-    let allGames = [];
-
     async function loadDashboard() {
         try {
-            const [gamesData, overridesData, groupsData] = await Promise.all([
+            var results = await Promise.all([
                 API.get('games'),
                 API.get('overrides'),
                 API.get('groups')
             ]);
+            var gamesData = results[0];
+            var overridesData = results[1];
+            var groupsData = results[2];
 
             allGames = gamesData.games || [];
+            var activeOverrides = overridesData.active || [];
+
             renderStats(allGames);
             renderGroupControls(groupsData.groups || []);
             renderGameGrid(allGames);
-            renderActiveOverrides(overridesData.active || []);
+            renderActiveOverrides(activeOverrides);
 
-            const syncEl = document.getElementById('last-sync');
+            // Adjust polling rate based on active overrides
+            adjustPollingRate(activeOverrides);
+
+            // Schedule precise timers for override expiry
+            scheduleExpiryTimers(activeOverrides);
+
+            var syncEl = document.getElementById('last-sync');
             if (syncEl) {
                 syncEl.textContent = gamesData.last_synced
                     ? 'Last synced: ' + App.formatDatetime(gamesData.last_synced) + ' UTC'
@@ -87,23 +185,23 @@
     }
 
     function renderStats(games) {
-        const grid = document.getElementById('stats-grid');
+        var grid = document.getElementById('stats-grid');
         if (!grid) return;
         grid.innerHTML = '';
 
-        const total = games.length;
-        const enabled = games.filter(g => g.operation_status === 'enabled').length;
-        const paused = games.filter(g => g.operation_status === 'paused').length;
-        const oos = games.filter(g => g.operation_status === 'outOfService').length;
+        var total = games.length;
+        var enabled = games.filter(function(g) { return g.operation_status === 'enabled'; }).length;
+        var paused = games.filter(function(g) { return g.operation_status === 'paused'; }).length;
+        var oos = games.filter(function(g) { return g.operation_status === 'outOfService'; }).length;
 
-        const stats = [
+        var stats = [
             { label: 'Total Games', value: total, cls: '' },
             { label: 'Enabled', value: enabled, cls: 'text-success' },
             { label: 'Paused', value: paused, cls: 'text-warning' },
             { label: 'Out of Service', value: oos, cls: 'text-danger' },
         ];
 
-        stats.forEach(s => {
+        stats.forEach(function(s) {
             grid.appendChild(App.el('div', { className: 'stat-card' }, [
                 App.el('div', { className: 'stat-label', textContent: s.label }),
                 App.el('div', { className: 'stat-value ' + s.cls, textContent: String(s.value) })
@@ -112,8 +210,8 @@
     }
 
     function renderGroupControls(groups) {
-        const el = document.getElementById('group-controls');
-        const masterEl = document.getElementById('master-controls');
+        var el = document.getElementById('group-controls');
+        var masterEl = document.getElementById('master-controls');
         if (!el) return;
         el.innerHTML = '';
         if (masterEl) masterEl.innerHTML = '';
