@@ -1,7 +1,7 @@
 <?php
 /**
  * Watchdog cron: catches missed actions and re-queues broken at jobs.
- * Run every 5 minutes as a safety net alongside the daily cron.
+ * Run every minute as a safety net alongside the daily cron.
  *
  * Usage: php cron_watchdog.php
  * Crontab: * * * * * /usr/bin/php /var/www/html/ce/pause-groups-main/cron_watchdog.php >> /var/www/html/ce/pause-groups-main/data/watchdog.log 2>&1
