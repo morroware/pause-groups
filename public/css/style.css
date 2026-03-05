@@ -208,20 +208,22 @@ body::before {
 }
 
 .theme-toggle {
-    position: fixed;
-    top: 1rem;
-    right: 1rem;
-    z-index: 1200;
     border: 1px solid var(--border);
-    background: color-mix(in srgb, var(--bg-card) 88%, transparent);
+    background: color-mix(in srgb, var(--bg-card) 92%, transparent);
     color: var(--text-secondary);
     border-radius: var(--radius-full);
     font-family: inherit;
-    font-size: 0.76rem;
-    padding: 0.4rem 0.8rem;
+    font-size: 0.74rem;
+    padding: 0.32rem 0.65rem;
     cursor: pointer;
     transition: all var(--transition-fast);
     box-shadow: var(--shadow-sm);
+}
+.theme-toggle-inline {
+    margin-left: auto;
+    position: absolute;
+    top: 0.9rem;
+    right: 0.9rem;
 }
 .theme-toggle:hover {
     color: var(--text-primary);
@@ -691,6 +693,7 @@ body::before {
     padding: 1rem;
 }
 .login-card {
+    position: relative;
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius-xl);
@@ -862,7 +865,7 @@ body::before {
 @media (max-width: 900px) {
     .sidebar { display: none; }
     .main-content { margin-left: 0; padding: 1rem; }
-    .theme-toggle { top: 0.6rem; right: 0.6rem; }
+    .theme-toggle-inline { top: 0.6rem; right: 0.6rem; }
     .page-header { padding: 0.7rem 0.8rem; }
     .schedule-week { grid-template-columns: repeat(3, 1fr); }
     .form-row { grid-template-columns: 1fr; }
