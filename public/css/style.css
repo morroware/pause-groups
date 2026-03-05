@@ -756,3 +756,277 @@ a:hover { color: var(--accent-hover); }
     .game-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
     .schedule-week { grid-template-columns: 1fr; }
 }
+
+/* ============================================
+   Scalable Table View (Games, etc.)
+   ============================================ */
+.table-responsive {
+    overflow-x: auto;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+}
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+.table th {
+    text-align: left;
+    padding: 0.6rem 0.85rem;
+    background: var(--bg-tertiary);
+    font-weight: 600;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    user-select: none;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
+.table th.sortable { cursor: pointer; }
+.table th.sortable:hover { color: var(--text-primary); background: var(--bg-card-hover); }
+.table th .sort-icon { margin-left: 0.35rem; opacity: 0.3; font-size: 0.65rem; }
+.table th.sorted .sort-icon { opacity: 1; color: var(--accent); }
+.table td {
+    padding: 0.5rem 0.85rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+}
+.table tbody tr { transition: background var(--transition-fast); }
+.table tbody tr:hover { background: var(--bg-card-hover); }
+.table tbody tr:last-child td { border-bottom: none; }
+.table .row-error { background: var(--danger-subtle); }
+
+/* Scrollable table container for large datasets */
+.table-scroll-container {
+    max-height: 520px;
+    overflow-y: auto;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+}
+.table-scroll-container .table th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
+
+/* ============================================
+   View Toggle (Grid / Table)
+   ============================================ */
+.view-toggle {
+    display: inline-flex;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+.view-toggle-btn {
+    padding: 0.3rem 0.6rem;
+    font-size: 0.78rem;
+    font-family: inherit;
+    background: transparent;
+    color: var(--text-secondary);
+    border: none;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    font-weight: 500;
+}
+.view-toggle-btn:hover { color: var(--text-primary); background: var(--bg-tertiary); }
+.view-toggle-btn.active { background: var(--accent); color: #fff; }
+
+/* ============================================
+   Status Filter Pills
+   ============================================ */
+.filter-pills {
+    display: flex;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+}
+.filter-pill {
+    padding: 0.25rem 0.65rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    font-family: inherit;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+.filter-pill:hover { border-color: var(--border-hover); color: var(--text-primary); }
+.filter-pill.active { background: var(--accent-subtle); border-color: var(--accent); color: var(--accent); }
+.filter-pill.active-enabled { background: var(--success-subtle); border-color: var(--success); color: var(--success); }
+.filter-pill.active-paused { background: var(--warning-subtle); border-color: var(--warning); color: var(--warning); }
+.filter-pill.active-oos { background: var(--danger-subtle); border-color: var(--danger); color: var(--danger); }
+
+.filter-pill .pill-count {
+    font-size: 0.68rem;
+    opacity: 0.8;
+    margin-left: 0.25rem;
+}
+
+/* ============================================
+   Pagination (Reusable)
+   ============================================ */
+.pagination-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.65rem 0.85rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-top: none;
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+    font-size: 0.78rem;
+}
+.pagination-bar .pagination-info {
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+}
+.pagination-bar .pagination-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+.pagination-bar .pagination-controls .btn {
+    min-width: 32px;
+    justify-content: center;
+}
+.page-size-select {
+    padding: 0.2rem 0.4rem;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 0.75rem;
+    font-family: inherit;
+    margin-left: 0.5rem;
+}
+
+/* ============================================
+   Improved Game Picker (Group Form)
+   ============================================ */
+.game-picker-container {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+.game-picker-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.65rem;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+}
+.game-picker-toolbar .form-input {
+    flex: 1;
+    min-width: 180px;
+    padding: 0.35rem 0.6rem;
+    font-size: 0.82rem;
+}
+.game-picker-stats {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    padding: 0.25rem 0.5rem;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-full);
+}
+.game-picker-stats strong {
+    color: var(--accent);
+    font-weight: 600;
+}
+.game-picker-list {
+    max-height: 400px;
+    overflow-y: auto;
+    padding: 0.25rem;
+}
+.game-picker-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0.5rem;
+    border-radius: var(--radius-sm);
+    transition: background var(--transition-fast);
+    font-size: 0.82rem;
+}
+.game-picker-item:hover { background: var(--bg-tertiary); }
+.game-picker-item input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent);
+    flex-shrink: 0;
+}
+.game-picker-item .game-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.game-picker-item .game-status {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+.game-picker-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.45rem 0.65rem;
+    background: var(--bg-tertiary);
+    border-top: 1px solid var(--border);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+/* ============================================
+   Toolbar Row (Search + Filters + Toggle)
+   ============================================ */
+.toolbar-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+}
+.toolbar-row .form-input {
+    max-width: 240px;
+}
+
+/* ============================================
+   Group Controls Collapse
+   ============================================ */
+.section-collapse-btn {
+    padding: 0.2rem 0.5rem;
+    font-size: 0.72rem;
+    font-family: inherit;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+.section-collapse-btn:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+
+/* Quick summary row for collapsed groups */
+.groups-summary-bar {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    padding: 0.5rem 0;
+}
+.groups-summary-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.7rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+.groups-summary-item:hover { border-color: var(--border-hover); background: var(--bg-card-hover); }

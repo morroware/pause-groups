@@ -1,12 +1,13 @@
 /**
  * Action log viewer: paginated table with filters.
+ * Enhanced with improved pagination controls and page size selector.
  */
 (function() {
     App.registerRoute('#/logs', { render: renderLogs });
 
     let filters = {};
     let currentPage = 1;
-    const perPage = 50;
+    let perPage = 50;
 
     async function renderLogs(container) {
         filters = {};
@@ -127,6 +128,7 @@
             }
 
             // Table
+            var scrollContainer = App.el('div', { className: 'table-scroll-container' });
             const table = App.el('table', { className: 'table' });
 
             const thead = App.el('thead');
@@ -185,22 +187,15 @@
             });
             table.appendChild(tbody);
 
-            const wrapper = App.el('div', { className: 'table-responsive' });
-            wrapper.appendChild(table);
-            content.appendChild(wrapper);
+            scrollContainer.appendChild(table);
+            content.appendChild(scrollContainer);
 
-            // Pagination
-            const totalPages = Math.ceil((data.total || 0) / perPage);
-            if (totalPages > 1) {
-                content.appendChild(buildPagination(totalPages));
+            // Pagination bar
+            const totalItems = data.total || 0;
+            const totalPages = Math.ceil(totalItems / perPage);
+            if (totalPages >= 1) {
+                content.appendChild(buildPagination(totalItems, totalPages));
             }
-
-            // Summary
-            content.appendChild(App.el('p', {
-                className: 'text-muted text-sm',
-                style: { marginTop: '0.5rem' },
-                textContent: 'Showing ' + data.logs.length + ' of ' + (data.total || 0) + ' entries'
-            }));
 
         } catch (err) {
             content.innerHTML = '';
@@ -208,50 +203,88 @@
         }
     }
 
-    function buildPagination(totalPages) {
-        const nav = App.el('div', {
-            style: { display: 'flex', justifyContent: 'center', gap: '0.25rem', marginTop: '1rem', flexWrap: 'wrap' }
-        });
+    function buildPagination(totalItems, totalPages) {
+        var bar = App.el('div', { className: 'pagination-bar' });
+
+        var startIdx = (currentPage - 1) * perPage + 1;
+        var endIdx = Math.min(currentPage * perPage, totalItems);
+
+        bar.appendChild(App.el('div', { className: 'pagination-info' }, [
+            App.el('span', { textContent: 'Showing ' + startIdx + '-' + endIdx + ' of ' + totalItems + ' entries' }),
+            App.el('select', {
+                className: 'page-size-select',
+                onChange: function() {
+                    perPage = parseInt(this.value);
+                    currentPage = 1;
+                    loadLogs();
+                }
+            }, [25, 50, 100, 200].map(function(size) {
+                var opt = App.el('option', { value: String(size), textContent: size + ' / page' });
+                if (size === perPage) opt.selected = true;
+                return opt;
+            }))
+        ]));
+
+        var controls = App.el('div', { className: 'pagination-controls' });
+
+        // First
+        controls.appendChild(App.el('button', {
+            className: 'btn btn-ghost btn-sm',
+            textContent: '\u00AB',
+            disabled: currentPage <= 1,
+            title: 'First page',
+            onClick: function() { currentPage = 1; loadLogs(); }
+        }));
 
         // Previous
-        if (currentPage > 1) {
-            nav.appendChild(App.el('button', {
-                className: 'btn btn-ghost btn-sm', textContent: '\u2190 Prev',
-                onClick: () => { currentPage--; loadLogs(); }
-            }));
-        }
+        controls.appendChild(App.el('button', {
+            className: 'btn btn-ghost btn-sm',
+            textContent: '\u2039 Prev',
+            disabled: currentPage <= 1,
+            onClick: () => { currentPage--; loadLogs(); }
+        }));
 
-        // Page numbers (show max 7 pages around current)
-        const start = Math.max(1, currentPage - 3);
-        const end = Math.min(totalPages, currentPage + 3);
+        // Page numbers (show max 5 around current)
+        const start = Math.max(1, currentPage - 2);
+        const end = Math.min(totalPages, currentPage + 2);
 
         if (start > 1) {
-            nav.appendChild(pageBtn(1));
+            controls.appendChild(pageBtn(1));
             if (start > 2) {
-                nav.appendChild(App.el('span', { textContent: '\u2026', style: { padding: '0.25rem 0.5rem', color: 'var(--text-muted)' } }));
+                controls.appendChild(App.el('span', { textContent: '\u2026', style: { padding: '0.25rem 0.35rem', color: 'var(--text-muted)' } }));
             }
         }
 
         for (let i = start; i <= end; i++) {
-            nav.appendChild(pageBtn(i));
+            controls.appendChild(pageBtn(i));
         }
 
         if (end < totalPages) {
             if (end < totalPages - 1) {
-                nav.appendChild(App.el('span', { textContent: '\u2026', style: { padding: '0.25rem 0.5rem', color: 'var(--text-muted)' } }));
+                controls.appendChild(App.el('span', { textContent: '\u2026', style: { padding: '0.25rem 0.35rem', color: 'var(--text-muted)' } }));
             }
-            nav.appendChild(pageBtn(totalPages));
+            controls.appendChild(pageBtn(totalPages));
         }
 
         // Next
-        if (currentPage < totalPages) {
-            nav.appendChild(App.el('button', {
-                className: 'btn btn-ghost btn-sm', textContent: 'Next \u2192',
-                onClick: () => { currentPage++; loadLogs(); }
-            }));
-        }
+        controls.appendChild(App.el('button', {
+            className: 'btn btn-ghost btn-sm',
+            textContent: 'Next \u203A',
+            disabled: currentPage >= totalPages,
+            onClick: () => { currentPage++; loadLogs(); }
+        }));
 
-        return nav;
+        // Last
+        controls.appendChild(App.el('button', {
+            className: 'btn btn-ghost btn-sm',
+            textContent: '\u00BB',
+            disabled: currentPage >= totalPages,
+            title: 'Last page',
+            onClick: function() { currentPage = totalPages; loadLogs(); }
+        }));
+
+        bar.appendChild(controls);
+        return bar;
     }
 
     function pageBtn(page) {
