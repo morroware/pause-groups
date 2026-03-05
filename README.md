@@ -54,7 +54,7 @@ Use the following crontab entries (project path example: `/var/www/html/ce/pause
 5 0 * * * /usr/bin/php /var/www/html/ce/pause-groups-main/cron.php >> /var/www/html/ce/pause-groups-main/data/cron.log 2>&1
 ```
 
-`cron_watchdog.php` is a reliability safety net (missed-action execution, state enforcement, and at-job requeue). `cron.php` performs the daily plan build and queueing.
+`cron_watchdog.php` is a reliability safety net (missed-action execution, state enforcement, cache refresh, and at-job requeue). `cron.php` performs the daily plan build and queueing.
 
 If `at`/`atrm` are not installed, keep the watchdog cron enabled (every minute). In that mode, due actions are executed when watchdog runs rather than through native `at` jobs.
 
@@ -123,6 +123,17 @@ The cron job runs once per day and:
 
 When schedules or overrides are modified through the UI, the system replans the remainder of the day automatically.
 
+### Game Sync Behavior
+
+Game and status data is refreshed from CenterEdge in multiple ways:
+
+1. **Daily cron (`cron.php`)** performs a full sync before planning actions.
+2. **Watchdog cron (`cron_watchdog.php`)** performs one sync each watchdog cycle before enforcing desired states.
+3. **Dashboard "Sync Now" button** calls `POST /api/games/sync` to force an immediate refresh.
+4. **`GET /api/games` auto-primes cache** by running a sync if the cache is empty.
+
+The dashboard itself auto-refreshes every 60 seconds, but that refresh reads the existing cache unless one of the sync paths above runs.
+
 ### Action Execution
 
 When `at` is available, each `at` job invokes `run_action.php`. In fallback mode (no `at`), the watchdog/missed-action path invokes the same scheduler logic. Core execution behavior is:
@@ -147,7 +158,7 @@ All endpoints return JSON. State-changing requests (POST, PUT, DELETE) require a
 | `/api/settings` | GET | Read API configuration |
 | `/api/settings` | PUT | Update API configuration |
 | `/api/settings/test` | POST | Test CenterEdge connection |
-| `/api/games` | GET | List cached games |
+| `/api/games` | GET | List cached games (auto-syncs if cache is empty) |
 | `/api/games/categories` | GET | List game categories |
 | `/api/games/sync` | POST | Force game cache refresh |
 | `/api/groups` | GET, POST | List or create pause groups |
