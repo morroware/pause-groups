@@ -6,6 +6,8 @@ const App = {
     routes: {},
     currentCleanup: null,
     toastContainer: null,
+    theme: 'dark',
+    themeToggleBtn: null,
 
     DAYS: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
     DAYS_SHORT: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
@@ -13,6 +15,7 @@ const App = {
     init() {
         API.init(window.APP_CONFIG);
         this.currentUser = window.APP_CONFIG.user;
+        this.initTheme();
 
         window.addEventListener('hashchange', () => this.route());
 
@@ -21,7 +24,40 @@ const App = {
         this.toastContainer.className = 'toast-container';
         document.body.appendChild(this.toastContainer);
 
+        this.createThemeToggle();
+
         this.route();
+    },
+
+    initTheme() {
+        const stored = localStorage.getItem('pause-groups-theme');
+        this.theme = stored === 'light' ? 'light' : 'dark';
+        this.applyTheme();
+    },
+
+    applyTheme() {
+        document.documentElement.setAttribute('data-theme', this.theme);
+        if (this.themeToggleBtn) {
+            this.themeToggleBtn.textContent = this.theme === 'dark' ? '\u263D Light mode' : '\u2600 Dark mode';
+        }
+    },
+
+    toggleTheme() {
+        this.theme = this.theme === 'dark' ? 'light' : 'dark';
+        localStorage.setItem('pause-groups-theme', this.theme);
+        this.applyTheme();
+    },
+
+    createThemeToggle() {
+        this.themeToggleBtn = this.el('button', {
+            className: 'theme-toggle',
+            type: 'button',
+            title: 'Toggle light/dark theme',
+            'aria-label': 'Toggle light or dark mode',
+            onClick: () => this.toggleTheme()
+        });
+        document.body.appendChild(this.themeToggleBtn);
+        this.applyTheme();
     },
 
     registerRoute(hash, handler) {
@@ -46,6 +82,8 @@ const App = {
             window.location.hash = '#/dashboard';
             return;
         }
+
+        this.setAppStateClass();
 
         // Find matching route
         let handler = null;
@@ -84,6 +122,12 @@ const App = {
                 this.currentCleanup = cleanup;
             }
         }
+    },
+
+
+    setAppStateClass() {
+        document.body.classList.toggle('app-authenticated', !!this.currentUser);
+        document.body.classList.toggle('app-guest', !this.currentUser);
     },
 
     matchRoute(pattern, hash) {
