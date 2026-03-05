@@ -106,7 +106,10 @@ function listGroups(): void {
             'out_of_service' => $oosCount,
         ];
 
-        // Next scheduled transition today
+        // Next scheduled transition today.
+        // Schedule windows define active (unpaused) hours:
+        //   start_time → unpause (games become active)
+        //   end_time   → pause   (active window ends)
         $nextTransition = null;
         if ($group['is_active']) {
             $todaySchedules = DB::query(
@@ -117,11 +120,11 @@ function listGroups(): void {
             );
             foreach ($todaySchedules as $sched) {
                 if ($sched['start_time'] > $currentTime) {
-                    $nextTransition = ['time' => $sched['start_time'], 'action' => 'pause'];
+                    $nextTransition = ['time' => $sched['start_time'], 'action' => 'unpause'];
                     break;
                 }
                 if ($sched['end_time'] > $currentTime) {
-                    $nextTransition = ['time' => $sched['end_time'], 'action' => 'unpause'];
+                    $nextTransition = ['time' => $sched['end_time'], 'action' => 'pause'];
                     break;
                 }
             }
