@@ -53,21 +53,45 @@ try {
     date_default_timezone_set($tz);
     $today = date('Y-m-d');
 
+    $errors = [];
+
     // Execute any missed actions (scheduled time has passed but not yet executed)
-    Scheduler::executeMissedActions($today);
+    try {
+        Scheduler::executeMissedActions($today);
+    } catch (Exception $e) {
+        $errors[] = "executeMissedActions: " . $e->getMessage();
+        error_log("[" . date('c') . "] watchdog executeMissedActions error: " . $e->getMessage());
+    }
 
     // Enforce the live desired state as a fallback when queued jobs are delayed/missing.
-    Scheduler::enforceCurrentStates();
+    try {
+        Scheduler::enforceCurrentStates();
+    } catch (Exception $e) {
+        $errors[] = "enforceCurrentStates: " . $e->getMessage();
+        error_log("[" . date('c') . "] watchdog enforceCurrentStates error: " . $e->getMessage());
+    }
 
     // Re-queue any actions that are missing their at jobs
     // (pending, future, but no at_job_id — can happen if at failed silently)
-    Scheduler::queueAtJobs($today);
+    try {
+        Scheduler::queueAtJobs($today);
+    } catch (Exception $e) {
+        $errors[] = "queueAtJobs: " . $e->getMessage();
+        error_log("[" . date('c') . "] watchdog queueAtJobs error: " . $e->getMessage());
+    }
+
+    // Write heartbeat even if individual steps had transient errors,
+    // so long as the watchdog itself is running
+    Scheduler::writeHeartbeat('watchdog');
+
+    if (!empty($errors)) {
+        echo "[" . date('c') . "] watchdog completed with " . count($errors) . " error(s): " . implode('; ', $errors) . "\n";
+    }
 
 } catch (Exception $e) {
-    $msg = "[" . date('c') . "] watchdog error: " . $e->getMessage() . "\n";
+    $msg = "[" . date('c') . "] watchdog fatal error: " . $e->getMessage() . "\n";
     echo $msg;
     error_log($msg);
-    exit(1);
 } finally {
     flock($lockFile, LOCK_UN);
     fclose($lockFile);

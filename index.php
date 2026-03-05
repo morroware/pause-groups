@@ -115,6 +115,9 @@ if ($path === 'api' || strpos($path, 'api/') === 0) {
                 require_once __DIR__ . '/api/users.php';
                 handleUsers($method, $parts, $input);
                 break;
+            case 'health':
+                handleHealthCheck();
+                break;
             default:
                 http_response_code(404);
                 echo json_encode(['error' => 'Unknown API endpoint']);
@@ -138,6 +141,63 @@ if ($path === 'api' || strpos($path, 'api/') === 0) {
         error_log('Unhandled exception: ' . $msg . "\n" . $e->getTraceAsString());
     }
     exit;
+}
+
+/**
+ * Health check endpoint (no auth required).
+ * Reports cron heartbeat status so operators can detect if scheduling is alive.
+ */
+function handleHealthCheck(): void {
+    $dataDir = dirname(DB_PATH);
+    $status = ['status' => 'ok', 'cron' => null, 'watchdog' => null, 'database' => false];
+
+    // Check database connectivity
+    try {
+        DB::queryOne('SELECT 1');
+        $status['database'] = true;
+    } catch (Exception $e) {
+        $status['status'] = 'degraded';
+    }
+
+    // Check cron heartbeat
+    $cronHeartbeat = $dataDir . '/.heartbeat_cron';
+    if (file_exists($cronHeartbeat)) {
+        $lastRun = file_get_contents($cronHeartbeat);
+        $age = time() - strtotime($lastRun);
+        $status['cron'] = [
+            'last_run' => $lastRun,
+            'age_seconds' => $age,
+            'healthy' => $age < 90000, // 25 hours (cron runs daily)
+        ];
+        if ($age >= 90000) {
+            $status['status'] = 'degraded';
+        }
+    } else {
+        $status['cron'] = ['last_run' => null, 'healthy' => false];
+        $status['status'] = 'degraded';
+    }
+
+    // Check watchdog heartbeat
+    $watchdogHeartbeat = $dataDir . '/.heartbeat_watchdog';
+    if (file_exists($watchdogHeartbeat)) {
+        $lastRun = file_get_contents($watchdogHeartbeat);
+        $age = time() - strtotime($lastRun);
+        $status['watchdog'] = [
+            'last_run' => $lastRun,
+            'age_seconds' => $age,
+            'healthy' => $age < 180, // 3 minutes (watchdog runs every minute)
+        ];
+        if ($age >= 180) {
+            $status['status'] = 'degraded';
+        }
+    } else {
+        $status['watchdog'] = ['last_run' => null, 'healthy' => false];
+        $status['status'] = 'degraded';
+    }
+
+    $httpCode = $status['status'] === 'ok' ? 200 : 503;
+    http_response_code($httpCode);
+    echo json_encode($status);
 }
 
 // ---------------------------------------------------

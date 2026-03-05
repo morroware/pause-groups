@@ -295,21 +295,45 @@ class CenterEdgeClient {
     // -----------------------------------------------
 
     /**
-     * Make an authenticated API request with retry on 401.
+     * Make an authenticated API request with retry on 401 and transient errors.
+     * Retries up to 3 times with exponential backoff for network errors and 5xx.
      */
     private function request(string $method, string $path, ?array $body = null, array $query = []): array {
         $token = $this->getToken();
+        $maxRetries = 3;
+        $lastException = null;
 
-        try {
-            return $this->httpRequest($method, $path, $body, true, $query);
-        } catch (RuntimeException $e) {
-            // If 401, re-authenticate and retry once
-            if (strpos($e->getMessage(), '401') !== false) {
-                $this->authenticate();
+        for ($attempt = 0; $attempt <= $maxRetries; $attempt++) {
+            try {
                 return $this->httpRequest($method, $path, $body, true, $query);
+            } catch (RuntimeException $e) {
+                $lastException = $e;
+                $msg = $e->getMessage();
+
+                // If 401, re-authenticate and retry once (don't count as transient retry)
+                if (strpos($msg, 'HTTP 401') !== false && $attempt === 0) {
+                    $this->authenticate();
+                    continue;
+                }
+
+                // Don't retry client errors (4xx) other than 401/408/429
+                if (preg_match('/HTTP (4\d\d)/', $msg, $m)) {
+                    $code = (int)$m[1];
+                    if ($code !== 408 && $code !== 429) {
+                        throw $e;
+                    }
+                }
+
+                // Retry on transient errors: network failures, 5xx, 408, 429
+                if ($attempt < $maxRetries) {
+                    $delay = (int)pow(2, $attempt + 1); // 2s, 4s, 8s
+                    error_log("CenterEdge API transient error (attempt " . ($attempt + 1) . "/$maxRetries, retrying in {$delay}s): $msg");
+                    sleep($delay);
+                }
             }
-            throw $e;
         }
+
+        throw $lastException;
     }
 
     /**
