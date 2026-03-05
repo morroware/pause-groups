@@ -104,8 +104,8 @@ function createSchedules(?array $input): void {
         $created[] = DB::lastInsertId();
     }
 
-    // Replan today if any schedule affects today
-    replanIfNeeded($daysOfWeek);
+    // Replan today if any schedule affects today; enforce state immediately
+    replanIfNeeded($daysOfWeek, [$groupId]);
 
     http_response_code(201);
     $schedules = [];
@@ -143,8 +143,8 @@ function updateSchedule(int $scheduleId, ?array $input): void {
         [$dayOfWeek, $startTime, $endTime, $isActive, $scheduleId]
     );
 
-    // Replan if the old or new day is today
-    replanIfNeeded([$existing['day_of_week'], $dayOfWeek]);
+    // Replan if the old or new day is today; enforce state immediately
+    replanIfNeeded([$existing['day_of_week'], $dayOfWeek], [$existing['pause_group_id']]);
 
     $schedule = DB::queryOne('SELECT s.*, g.name as group_name FROM schedules s JOIN pause_groups g ON g.id = s.pause_group_id WHERE s.id = :p0', [$scheduleId]);
     echo json_encode($schedule);
@@ -160,29 +160,45 @@ function deleteSchedule(int $scheduleId): void {
 
     DB::execute('DELETE FROM schedules WHERE id = :p0', [$scheduleId]);
 
-    // Replan if the deleted schedule was for today
-    replanIfNeeded([$existing['day_of_week']]);
+    // Replan if the deleted schedule was for today; enforce state immediately
+    replanIfNeeded([$existing['day_of_week']], [$existing['pause_group_id']]);
 
     echo json_encode(['success' => true]);
 }
 
 /**
- * Trigger replan if any of the given days matches today.
+ * Trigger replan if any of the given days matches today, and immediately
+ * enforce the correct state for affected groups so changes take effect
+ * without waiting for the next watchdog cycle.
+ *
+ * $affectedGroupIds — group IDs whose schedules changed.  When provided,
+ * enforceGroupState() is called for each so the API actually applies the
+ * new schedule right away (mirroring how override CRUD already works).
  */
-function replanIfNeeded(array $daysOfWeek): void {
+function replanIfNeeded(array $daysOfWeek, array $affectedGroupIds = []): void {
     $tz = DB::getConfig('timezone') ?? DEFAULT_TIMEZONE;
     $now = new DateTime('now', new DateTimeZone($tz));
     $todayDow = (int)$now->format('w'); // 0=Sunday
 
-    if (in_array($todayDow, $daysOfWeek)) {
+    if (in_array($todayDow, array_map('intval', $daysOfWeek))) {
         // Load scheduler and replan
         if (file_exists(__DIR__ . '/../lib/scheduler.php')) {
             require_once __DIR__ . '/../lib/scheduler.php';
             try {
                 Scheduler::replanToday();
             } catch (Exception $e) {
-                // Log but don't fail the API response
                 error_log('Replan failed: ' . $e->getMessage());
+            }
+
+            // Immediately enforce the desired state for each affected group
+            // so the user sees the effect right away instead of waiting up to
+            // 60 seconds for the watchdog.
+            foreach ($affectedGroupIds as $gid) {
+                try {
+                    Scheduler::enforceGroupState((int)$gid);
+                } catch (Exception $e) {
+                    error_log("Enforce state after schedule change failed for group #$gid: " . $e->getMessage());
+                }
             }
         }
     }

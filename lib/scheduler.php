@@ -165,8 +165,8 @@ class Scheduler {
             $isToday = ($date === $now->format('Y-m-d'));
 
             foreach ($seen as $time => $t) {
-                if ($isToday && $time <= $nowTime) {
-                    continue; // Skip past times
+                if ($isToday && $time < $nowTime) {
+                    continue; // Skip past times (strict < so current-minute transitions are kept)
                 }
 
                 DB::execute(
@@ -255,11 +255,13 @@ class Scheduler {
         }
 
         foreach ($actions as $action) {
+            // Build the command that `at` will execute via /bin/sh.
+            // Use printf with %q (bash) or manual escaping to avoid nested
+            // quoting issues with the old echo-in-double-quotes approach.
+            $atCmd = sprintf('%s %s --id %d', $phpBin, $scriptPath, $action['id']);
             $cmd = sprintf(
-                'echo "%s %s --id %d" | at %s 2>&1',
-                escapeshellarg($phpBin),
-                escapeshellarg($scriptPath),
-                $action['id'],
+                'echo %s | at %s 2>&1',
+                escapeshellarg($atCmd),
                 escapeshellarg($action['scheduled_time'])
             );
 
@@ -281,15 +283,41 @@ class Scheduler {
 
     /**
      * Replan today: clear pending actions, recompute, requeue.
+     * Acquires the scheduler lock to prevent races with concurrent at-jobs
+     * and the watchdog.  When called from CLI scripts that already hold the
+     * lock, the flock() is a no-op on the same process.
      */
     public static function replanToday(): void {
         $tz = DB::getConfig('timezone') ?? DEFAULT_TIMEZONE;
         date_default_timezone_set($tz);
         $today = date('Y-m-d');
 
-        self::clearPendingActions($today);
-        self::planDay($today);
-        self::queueAtJobs($today);
+        // Acquire the scheduler lock so we don't race with run_action.php
+        // or cron_watchdog.php while clearing / recreating actions.
+        $lockFh = fopen(LOCK_FILE, 'c');
+        $lockHeld = false;
+        if ($lockFh) {
+            for ($i = 0; $i < 6; $i++) { // up to 30s
+                if (flock($lockFh, LOCK_EX | LOCK_NB)) {
+                    $lockHeld = true;
+                    break;
+                }
+                usleep(5000000); // 5s
+            }
+        }
+
+        try {
+            self::clearPendingActions($today);
+            self::planDay($today);
+            self::queueAtJobs($today);
+        } finally {
+            if ($lockHeld && $lockFh) {
+                flock($lockFh, LOCK_UN);
+            }
+            if ($lockFh) {
+                fclose($lockFh);
+            }
+        }
     }
 
     /**
@@ -305,9 +333,11 @@ class Scheduler {
         $nowStr = $now->format('Y-m-d H:i');
         $nowTime = $now->format('H:i');
 
-        // One sync for the whole watchdog cycle.
+        // Sync game states only if the cache is stale (older than 2 minutes).
+        // This avoids hammering the CenterEdge API every single minute while
+        // still keeping cache reasonably fresh for state comparisons.
         try {
-            self::syncGameStates();
+            self::syncGameStatesIfStale(120);
         } catch (Exception $e) {
             error_log('Watchdog sync failed: ' . $e->getMessage());
         }
@@ -590,7 +620,28 @@ class Scheduler {
     }
 
     /**
+     * Sync game states only if the cache is older than $maxAgeSeconds.
+     * Returns the number of games synced, or 0 if the cache is still fresh.
+     */
+    public static function syncGameStatesIfStale(int $maxAgeSeconds = 120): int {
+        $oldest = DB::queryOne('SELECT MIN(last_synced_at) as oldest FROM game_state_cache');
+        if ($oldest && $oldest['oldest']) {
+            $age = time() - strtotime($oldest['oldest'] . ' UTC');
+            if ($age < $maxAgeSeconds) {
+                return 0; // Cache is fresh enough
+            }
+        }
+        return self::syncGameStates();
+    }
+
+    /**
      * Check for and execute missed actions (earlier today, not yet executed).
+     *
+     * Only the *latest* missed action per group is actually executed against
+     * the API.  Earlier superseded actions for the same group are marked as
+     * executed (status 3 = superseded) without making API calls.  This avoids
+     * wasteful churn (e.g. pause then immediately unpause) and makes catch-up
+     * much faster.
      */
     public static function executeMissedActions(?string $date = null): void {
         $tz = DB::getConfig('timezone') ?? DEFAULT_TIMEZONE;
@@ -604,13 +655,38 @@ class Scheduler {
         $nowTime = $now->format('H:i');
 
         $missed = DB::query(
-            'SELECT id FROM scheduled_actions
+            'SELECT id, pause_group_id, action, scheduled_time FROM scheduled_actions
              WHERE scheduled_date = :p0 AND executed = 0 AND scheduled_time <= :p1
              ORDER BY scheduled_time ASC',
             [$date, $nowTime]
         );
 
+        if (empty($missed)) {
+            return;
+        }
+
+        // Determine the latest missed action per group (last one wins).
+        $latestPerGroup = [];
+        $superseded = [];
         foreach ($missed as $action) {
+            $gid = $action['pause_group_id'];
+            if (isset($latestPerGroup[$gid])) {
+                // The previous "latest" is now superseded
+                $superseded[] = $latestPerGroup[$gid]['id'];
+            }
+            $latestPerGroup[$gid] = $action;
+        }
+
+        // Mark superseded actions without executing them (status 3 = superseded)
+        foreach ($superseded as $actionId) {
+            DB::execute(
+                'UPDATE scheduled_actions SET executed = 3, executed_at = datetime(\'now\') WHERE id = :p0',
+                [$actionId]
+            );
+        }
+
+        // Execute only the latest action per group
+        foreach ($latestPerGroup as $action) {
             try {
                 self::executeAction($action['id']);
             } catch (Exception $e) {
