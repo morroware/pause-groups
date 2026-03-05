@@ -15,7 +15,7 @@
 
         // Weekly grid
         container.appendChild(App.el('div', { className: 'card', id: 'schedule-card' }, [
-            App.el('div', { className: 'card-title', textContent: 'Weekly Schedule Grid' }),
+            App.el('div', { className: 'card-title', textContent: 'Weekly Active Hours' }),
             App.el('div', { className: 'schedule-week', id: 'schedule-grid' })
         ]));
 
@@ -91,8 +91,8 @@
             App.el('tr', {}, [
                 App.el('th', { textContent: 'Group' }),
                 App.el('th', { textContent: 'Day' }),
-                App.el('th', { textContent: 'Start' }),
-                App.el('th', { textContent: 'End' }),
+                App.el('th', { textContent: 'Active From' }),
+                App.el('th', { textContent: 'Active Until' }),
                 App.el('th', { textContent: 'Status' }),
                 App.el('th', { textContent: 'Actions' })
             ])
@@ -156,10 +156,10 @@
             const startInput = App.el('input', { className: 'form-input', type: 'time', value: '09:00' });
             const endInput = App.el('input', { className: 'form-input', type: 'time', value: '17:00' });
             form.appendChild(App.el('div', { className: 'form-row' }, [
-                App.el('div', { className: 'form-group' }, [App.el('label', { className: 'form-label', textContent: 'Start Time' }), startInput]),
-                App.el('div', { className: 'form-group' }, [App.el('label', { className: 'form-label', textContent: 'End Time' }), endInput])
+                App.el('div', { className: 'form-group' }, [App.el('label', { className: 'form-label', textContent: 'Active From' }), startInput]),
+                App.el('div', { className: 'form-group' }, [App.el('label', { className: 'form-label', textContent: 'Active Until' }), endInput])
             ]));
-            form.appendChild(App.el('p', { className: 'form-help', textContent: 'Schedules cannot cross midnight. For overnight, create two entries.' }));
+            form.appendChild(App.el('p', { className: 'form-help', textContent: 'Games will be ACTIVE (unpaused) during these hours and PAUSED outside them. Schedules cannot cross midnight \u2014 for overnight, create two entries.' }));
 
             const footer = App.el('div', { className: 'flex gap-sm' }, [
                 App.el('button', { className: 'btn btn-secondary', textContent: 'Cancel', onClick: () => App.hideModal() }),
@@ -205,8 +205,8 @@
         const startInput = App.el('input', { className: 'form-input', type: 'time', value: schedule.start_time });
         const endInput = App.el('input', { className: 'form-input', type: 'time', value: schedule.end_time });
         form.appendChild(App.el('div', { className: 'form-row' }, [
-            App.el('div', { className: 'form-group' }, [App.el('label', { className: 'form-label', textContent: 'Start Time' }), startInput]),
-            App.el('div', { className: 'form-group' }, [App.el('label', { className: 'form-label', textContent: 'End Time' }), endInput])
+            App.el('div', { className: 'form-group' }, [App.el('label', { className: 'form-label', textContent: 'Active From' }), startInput]),
+            App.el('div', { className: 'form-group' }, [App.el('label', { className: 'form-label', textContent: 'Active Until' }), endInput])
         ]));
 
         const activeCheck = App.el('input', { type: 'checkbox', className: 'toggle-input' });
