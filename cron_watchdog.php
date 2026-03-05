@@ -25,10 +25,26 @@ if (!is_dir($dataDir)) {
     mkdir($dataDir, 0770, true);
 }
 
-// Acquire exclusive file lock (non-blocking — skip if another instance is running)
+// Acquire exclusive file lock with a short blocking wait.
+// Previous behavior: non-blocking skip.  Problem: if cron.php or run_action.php
+// held the lock for even a few seconds the watchdog would silently do nothing,
+// causing missed actions and delayed enforcement.  Now we retry for up to 15s
+// so the watchdog almost always runs within its 1-minute cadence.
 $lockFile = fopen(LOCK_FILE, 'c');
-if (!$lockFile || !flock($lockFile, LOCK_EX | LOCK_NB)) {
-    // Another process holds the lock — skip this run silently
+if (!$lockFile) {
+    exit(0);
+}
+$lockAcquired = false;
+for ($i = 0; $i < 15; $i++) {
+    if (flock($lockFile, LOCK_EX | LOCK_NB)) {
+        $lockAcquired = true;
+        break;
+    }
+    sleep(1);
+}
+if (!$lockAcquired) {
+    // Another long-running process still holds the lock after 15s — skip this cycle
+    fclose($lockFile);
     exit(0);
 }
 
