@@ -6,6 +6,9 @@
  *   - Active override exists: every 10 seconds
  *   - Override about to expire (< 2 min): every 5 seconds
  *   - Override just expired: immediate enforce call + refresh
+ *
+ * Scalable UI: supports hundreds of games with table view,
+ * pagination, filtering, and sorting.
  */
 (function() {
     App.registerRoute('#/dashboard', { render: renderDashboard });
@@ -20,6 +23,16 @@
     var refreshInterval = null;
     var expiryTimers = [];
     var currentInterval = INTERVAL_DEFAULT;
+
+    // View state
+    var gameView = 'table'; // 'grid' or 'table'
+    var gameStatusFilter = 'all'; // 'all', 'enabled', 'paused', 'outOfService'
+    var gameSearchTerm = '';
+    var gameSortCol = 'game_name';
+    var gameSortDir = 'asc';
+    var gamePage = 1;
+    var gamePageSize = 25;
+    var groupsCollapsed = false;
 
     function scheduleNextPoll() {
         if (refreshInterval) clearInterval(refreshInterval);
@@ -109,27 +122,78 @@
         var statsGrid = App.el('div', { className: 'stats-grid', id: 'stats-grid' });
         container.appendChild(statsGrid);
 
-        // Group controls
+        // Group controls (collapsible)
         container.appendChild(App.el('div', { className: 'card mt-2', id: 'group-controls-card' }, [
             App.el('div', { className: 'card-header' }, [
-                App.el('div', { className: 'card-title', textContent: 'Group Controls' }),
-                App.el('div', { className: 'flex gap-sm', id: 'master-controls' })
+                App.el('div', { className: 'flex-center gap-sm' }, [
+                    App.el('div', { className: 'card-title', textContent: 'Group Controls' }),
+                    App.el('span', { className: 'badge badge-info', id: 'group-count-badge', textContent: '0 groups' })
+                ]),
+                App.el('div', { className: 'flex-center gap-sm' }, [
+                    App.el('div', { className: 'flex gap-sm', id: 'master-controls' }),
+                    App.el('button', {
+                        className: 'section-collapse-btn',
+                        id: 'groups-collapse-btn',
+                        textContent: groupsCollapsed ? 'Expand' : 'Collapse',
+                        onClick: function() {
+                            groupsCollapsed = !groupsCollapsed;
+                            this.textContent = groupsCollapsed ? 'Expand' : 'Collapse';
+                            var grid = document.getElementById('group-controls');
+                            if (grid) grid.style.display = groupsCollapsed ? 'none' : '';
+                            var summary = document.getElementById('groups-summary');
+                            if (summary) summary.style.display = groupsCollapsed ? '' : 'none';
+                        }
+                    })
+                ])
             ]),
-            App.el('div', { id: 'group-controls', className: 'group-controls-grid' })
+            App.el('div', { id: 'groups-summary', className: 'groups-summary-bar', style: { display: groupsCollapsed ? '' : 'none' } }),
+            App.el('div', { id: 'group-controls', className: 'group-controls-grid', style: { display: groupsCollapsed ? 'none' : '' } })
         ]));
 
-        // Game grid
-        container.appendChild(App.el('div', { className: 'card mt-2' }, [
-            App.el('div', { className: 'card-header' }, [
+        // Game status section with toolbar
+        var gameCard = App.el('div', { className: 'card mt-2', id: 'game-status-card' });
+
+        // Card header with title + view toggle
+        gameCard.appendChild(App.el('div', { className: 'card-header' }, [
+            App.el('div', { className: 'flex-center gap-sm' }, [
                 App.el('div', { className: 'card-title', textContent: 'Game Status' }),
-                App.el('input', {
-                    className: 'form-input', type: 'text', placeholder: 'Search games...',
-                    id: 'game-search', style: { width: '200px', fontSize: '0.8rem', padding: '0.35rem 0.6rem' },
-                    onInput: filterGames
-                })
+                App.el('span', { className: 'badge badge-info', id: 'game-count-badge', textContent: '0 games' })
             ]),
-            App.el('div', { className: 'game-grid', id: 'game-grid' })
+            App.el('div', { className: 'view-toggle', id: 'view-toggle' }, [
+                App.el('button', {
+                    className: 'view-toggle-btn' + (gameView === 'table' ? ' active' : ''),
+                    textContent: 'Table',
+                    'data-view': 'table',
+                    onClick: function() { switchView('table'); }
+                }),
+                App.el('button', {
+                    className: 'view-toggle-btn' + (gameView === 'grid' ? ' active' : ''),
+                    textContent: 'Grid',
+                    'data-view': 'grid',
+                    onClick: function() { switchView('grid'); }
+                })
+            ])
         ]));
+
+        // Toolbar: search + status filter pills
+        var toolbar = App.el('div', { className: 'toolbar-row', id: 'game-toolbar' });
+        toolbar.appendChild(App.el('input', {
+            className: 'form-input', type: 'text', placeholder: 'Search games...',
+            id: 'game-search',
+            style: { maxWidth: '240px', fontSize: '0.82rem', padding: '0.4rem 0.65rem' },
+            onInput: function() {
+                gameSearchTerm = this.value.toLowerCase();
+                gamePage = 1;
+                renderGameView(allGames);
+            }
+        }));
+        toolbar.appendChild(App.el('div', { className: 'filter-pills', id: 'status-filters' }));
+        gameCard.appendChild(toolbar);
+
+        // Game content area
+        gameCard.appendChild(App.el('div', { id: 'game-content' }));
+
+        container.appendChild(gameCard);
 
         // Active overrides section
         container.appendChild(App.el('div', { className: 'card mt-2', id: 'active-overrides-card' }, [
@@ -148,6 +212,17 @@
         };
     }
 
+    function switchView(view) {
+        gameView = view;
+        // Update toggle buttons
+        var btns = document.querySelectorAll('#view-toggle .view-toggle-btn');
+        btns.forEach(function(btn) {
+            btn.classList.toggle('active', btn.getAttribute('data-view') === view);
+        });
+        gamePage = 1;
+        renderGameView(allGames);
+    }
+
     async function loadDashboard() {
         try {
             var results = await Promise.all([
@@ -164,8 +239,13 @@
 
             renderStats(allGames);
             renderGroupControls(groupsData.groups || []);
-            renderGameGrid(allGames);
+            renderStatusFilters(allGames);
+            renderGameView(allGames);
             renderActiveOverrides(activeOverrides);
+
+            // Update game count badge
+            var badge = document.getElementById('game-count-badge');
+            if (badge) badge.textContent = allGames.length + ' game' + (allGames.length !== 1 ? 's' : '');
 
             // Adjust polling rate based on active overrides
             adjustPollingRate(activeOverrides);
@@ -209,14 +289,316 @@
         });
     }
 
+    function renderStatusFilters(games) {
+        var el = document.getElementById('status-filters');
+        if (!el) return;
+        el.innerHTML = '';
+
+        var total = games.length;
+        var enabled = games.filter(function(g) { return g.operation_status === 'enabled'; }).length;
+        var paused = games.filter(function(g) { return g.operation_status === 'paused'; }).length;
+        var oos = games.filter(function(g) { return g.operation_status === 'outOfService'; }).length;
+
+        var filters = [
+            { key: 'all', label: 'All', count: total, activeCls: 'active' },
+            { key: 'enabled', label: 'Enabled', count: enabled, activeCls: 'active-enabled' },
+            { key: 'paused', label: 'Paused', count: paused, activeCls: 'active-paused' },
+            { key: 'outOfService', label: 'Out of Service', count: oos, activeCls: 'active-oos' },
+        ];
+
+        filters.forEach(function(f) {
+            var pill = App.el('button', {
+                className: 'filter-pill' + (gameStatusFilter === f.key ? ' ' + f.activeCls : ''),
+                onClick: function() {
+                    gameStatusFilter = f.key;
+                    gamePage = 1;
+                    renderStatusFilters(allGames);
+                    renderGameView(allGames);
+                }
+            }, [
+                App.el('span', { textContent: f.label }),
+                App.el('span', { className: 'pill-count', textContent: '(' + f.count + ')' })
+            ]);
+            el.appendChild(pill);
+        });
+    }
+
+    function getFilteredSortedGames(games) {
+        // Filter by search
+        var filtered = games;
+        if (gameSearchTerm) {
+            filtered = filtered.filter(function(g) {
+                return g.game_name.toLowerCase().includes(gameSearchTerm);
+            });
+        }
+        // Filter by status
+        if (gameStatusFilter !== 'all') {
+            filtered = filtered.filter(function(g) {
+                return g.operation_status === gameStatusFilter;
+            });
+        }
+        // Sort
+        filtered.sort(function(a, b) {
+            var aVal, bVal;
+            if (gameSortCol === 'game_name') {
+                aVal = (a.game_name || '').toLowerCase();
+                bVal = (b.game_name || '').toLowerCase();
+            } else if (gameSortCol === 'operation_status') {
+                var order = { enabled: 0, paused: 1, outOfService: 2 };
+                aVal = order[a.operation_status] !== undefined ? order[a.operation_status] : 3;
+                bVal = order[b.operation_status] !== undefined ? order[b.operation_status] : 3;
+            } else if (gameSortCol === 'game_id') {
+                aVal = a.game_id || '';
+                bVal = b.game_id || '';
+            } else {
+                aVal = a[gameSortCol] || '';
+                bVal = b[gameSortCol] || '';
+            }
+
+            if (aVal < bVal) return gameSortDir === 'asc' ? -1 : 1;
+            if (aVal > bVal) return gameSortDir === 'asc' ? 1 : -1;
+            return 0;
+        });
+
+        return filtered;
+    }
+
+    function renderGameView(games) {
+        var el = document.getElementById('game-content');
+        if (!el) return;
+        el.innerHTML = '';
+
+        if (games.length === 0) {
+            el.appendChild(App.emptyState('\uD83C\uDFAE', 'No games found. Configure CenterEdge API in Settings.'));
+            return;
+        }
+
+        var filtered = getFilteredSortedGames(games);
+
+        if (filtered.length === 0) {
+            el.appendChild(App.el('div', { className: 'empty-state', style: { padding: '2rem' } }, [
+                App.el('div', { className: 'empty-state-text', textContent: 'No games match the current filters.' })
+            ]));
+            return;
+        }
+
+        if (gameView === 'table') {
+            renderGameTable(el, filtered);
+        } else {
+            renderGameGrid(el, filtered);
+        }
+    }
+
+    function renderGameTable(container, filtered) {
+        var totalItems = filtered.length;
+        var totalPages = Math.ceil(totalItems / gamePageSize);
+        if (gamePage > totalPages) gamePage = totalPages;
+        if (gamePage < 1) gamePage = 1;
+
+        var startIdx = (gamePage - 1) * gamePageSize;
+        var pageItems = filtered.slice(startIdx, startIdx + gamePageSize);
+
+        // Scrollable table
+        var scrollContainer = App.el('div', { className: 'table-scroll-container' });
+        var table = App.el('table', { className: 'table' });
+
+        // Header
+        var thead = App.el('thead');
+        var headerRow = App.el('tr');
+
+        var columns = [
+            { key: 'game_name', label: 'Game Name', sortable: true },
+            { key: 'game_id', label: 'Game ID', sortable: true },
+            { key: 'operation_status', label: 'Status', sortable: true },
+            { key: 'categories', label: 'Categories', sortable: false }
+        ];
+
+        columns.forEach(function(col) {
+            var th = App.el('th', {
+                className: (col.sortable ? 'sortable' : '') + (gameSortCol === col.key ? ' sorted' : '')
+            });
+            th.appendChild(App.el('span', { textContent: col.label }));
+            if (col.sortable) {
+                var sortIcon = gameSortCol === col.key
+                    ? (gameSortDir === 'asc' ? '\u25B2' : '\u25BC')
+                    : '\u25B4';
+                th.appendChild(App.el('span', { className: 'sort-icon', textContent: sortIcon }));
+                th.addEventListener('click', function() {
+                    if (gameSortCol === col.key) {
+                        gameSortDir = gameSortDir === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        gameSortCol = col.key;
+                        gameSortDir = 'asc';
+                    }
+                    renderGameView(allGames);
+                });
+            }
+            headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        // Body
+        var tbody = App.el('tbody');
+        pageItems.forEach(function(game) {
+            var row = App.el('tr');
+
+            // Game name
+            row.appendChild(App.el('td', {}, [
+                App.el('span', { textContent: game.game_name, style: { fontWeight: '500' } })
+            ]));
+
+            // Game ID
+            row.appendChild(App.el('td', {
+                className: 'text-muted text-sm font-mono',
+                textContent: game.game_id || '-'
+            }));
+
+            // Status badge
+            row.appendChild(App.el('td', {}, [
+                App.statusBadge(game.operation_status)
+            ]));
+
+            // Categories
+            var cats = game.categories || [];
+            var catText = cats.length > 0
+                ? (typeof cats[0] === 'object' ? cats.map(function(c) { return c.name || c; }).join(', ') : cats.join(', '))
+                : '-';
+            row.appendChild(App.el('td', {
+                className: 'text-sm text-secondary',
+                textContent: catText,
+                style: { maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+                title: catText
+            }));
+
+            tbody.appendChild(row);
+        });
+        table.appendChild(tbody);
+        scrollContainer.appendChild(table);
+        container.appendChild(scrollContainer);
+
+        // Pagination bar
+        if (totalPages > 1 || totalItems > 25) {
+            container.appendChild(buildGamePagination(totalItems, totalPages));
+        }
+    }
+
+    function buildGamePagination(totalItems, totalPages) {
+        var bar = App.el('div', { className: 'pagination-bar' });
+
+        var startIdx = (gamePage - 1) * gamePageSize + 1;
+        var endIdx = Math.min(gamePage * gamePageSize, totalItems);
+
+        bar.appendChild(App.el('div', { className: 'pagination-info' }, [
+            App.el('span', { textContent: 'Showing ' + startIdx + '-' + endIdx + ' of ' + totalItems }),
+            App.el('select', {
+                className: 'page-size-select',
+                onChange: function() {
+                    gamePageSize = parseInt(this.value);
+                    gamePage = 1;
+                    renderGameView(allGames);
+                }
+            }, [25, 50, 100].map(function(size) {
+                var opt = App.el('option', { value: String(size), textContent: size + ' / page' });
+                if (size === gamePageSize) opt.selected = true;
+                return opt;
+            }))
+        ]));
+
+        var controls = App.el('div', { className: 'pagination-controls' });
+
+        // First
+        controls.appendChild(App.el('button', {
+            className: 'btn btn-ghost btn-sm',
+            textContent: '\u00AB',
+            disabled: gamePage <= 1,
+            title: 'First page',
+            onClick: function() { gamePage = 1; renderGameView(allGames); }
+        }));
+
+        // Previous
+        controls.appendChild(App.el('button', {
+            className: 'btn btn-ghost btn-sm',
+            textContent: '\u2039',
+            disabled: gamePage <= 1,
+            title: 'Previous page',
+            onClick: function() { gamePage--; renderGameView(allGames); }
+        }));
+
+        // Page indicator
+        controls.appendChild(App.el('span', {
+            className: 'text-sm',
+            style: { padding: '0 0.5rem' },
+            textContent: gamePage + ' / ' + totalPages
+        }));
+
+        // Next
+        controls.appendChild(App.el('button', {
+            className: 'btn btn-ghost btn-sm',
+            textContent: '\u203A',
+            disabled: gamePage >= totalPages,
+            title: 'Next page',
+            onClick: function() { gamePage++; renderGameView(allGames); }
+        }));
+
+        // Last
+        controls.appendChild(App.el('button', {
+            className: 'btn btn-ghost btn-sm',
+            textContent: '\u00BB',
+            disabled: gamePage >= totalPages,
+            title: 'Last page',
+            onClick: function() { gamePage = totalPages; renderGameView(allGames); }
+        }));
+
+        bar.appendChild(controls);
+        return bar;
+    }
+
+    function renderGameGrid(container, filtered) {
+        // In grid mode, paginate too for large sets
+        var totalItems = filtered.length;
+        var totalPages = Math.ceil(totalItems / gamePageSize);
+        if (gamePage > totalPages) gamePage = totalPages;
+        if (gamePage < 1) gamePage = 1;
+
+        var startIdx = (gamePage - 1) * gamePageSize;
+        var pageItems = filtered.slice(startIdx, startIdx + gamePageSize);
+
+        var grid = App.el('div', { className: 'game-grid' });
+        pageItems.forEach(function(game) {
+            var tile = App.el('div', {
+                className: 'game-tile',
+                'data-status': game.operation_status
+            }, [
+                App.el('div', { className: 'game-tile-name', textContent: game.game_name }),
+                App.el('div', { className: 'game-tile-status' }, [
+                    App.statusBadge(game.operation_status)
+                ])
+            ]);
+            grid.appendChild(tile);
+        });
+        container.appendChild(grid);
+
+        // Pagination bar
+        if (totalPages > 1 || totalItems > 25) {
+            container.appendChild(buildGamePagination(totalItems, totalPages));
+        }
+    }
+
     function renderGroupControls(groups) {
         var el = document.getElementById('group-controls');
         var masterEl = document.getElementById('master-controls');
+        var summaryEl = document.getElementById('groups-summary');
+        var countBadge = document.getElementById('group-count-badge');
         if (!el) return;
         el.innerHTML = '';
         if (masterEl) masterEl.innerHTML = '';
+        if (summaryEl) summaryEl.innerHTML = '';
 
         var activeGroups = groups.filter(function(g) { return g.is_active == 1; });
+
+        // Update count badge
+        if (countBadge) countBadge.textContent = activeGroups.length + ' active group' + (activeGroups.length !== 1 ? 's' : '');
 
         if (activeGroups.length === 0) {
             el.appendChild(App.el('div', { className: 'empty-state', style: { padding: '2rem' } }, [
@@ -254,6 +636,24 @@
             }
         }
 
+        // Collapsed summary view
+        if (summaryEl) {
+            activeGroups.forEach(function(group) {
+                var state = group.effective_state || 'empty';
+                var stats = group.game_stats || {};
+                var item = App.el('div', { className: 'groups-summary-item' }, [
+                    App.el('span', { className: 'status-dot status-dot-' + state }),
+                    App.el('span', { textContent: group.name, style: { fontWeight: '500', fontSize: '0.82rem' } }),
+                    App.el('span', {
+                        className: 'text-xs text-muted',
+                        textContent: (stats.total || 0) + ' games'
+                    })
+                ]);
+                summaryEl.appendChild(item);
+            });
+        }
+
+        // Full card view
         activeGroups.forEach(function(group) {
             var stats = group.game_stats || {};
             var state = group.effective_state || 'empty';
@@ -439,37 +839,6 @@
         for (var i = 0; i < btns.length; i++) {
             btns[i].disabled = loading;
         }
-    }
-
-    function renderGameGrid(games) {
-        var grid = document.getElementById('game-grid');
-        if (!grid) return;
-        grid.innerHTML = '';
-
-        if (games.length === 0) {
-            grid.appendChild(App.emptyState('\u{1F3AE}', 'No games found. Configure CenterEdge API in Settings.'));
-            return;
-        }
-
-        var searchVal = (document.getElementById('game-search')?.value || '').toLowerCase();
-        var filtered = searchVal ? games.filter(function(g) { return g.game_name.toLowerCase().includes(searchVal); }) : games;
-
-        filtered.forEach(function(game) {
-            var tile = App.el('div', {
-                className: 'game-tile',
-                'data-status': game.operation_status
-            }, [
-                App.el('div', { className: 'game-tile-name', textContent: game.game_name }),
-                App.el('div', { className: 'game-tile-status' }, [
-                    App.statusBadge(game.operation_status)
-                ])
-            ]);
-            grid.appendChild(tile);
-        });
-    }
-
-    function filterGames() {
-        renderGameGrid(allGames);
     }
 
     function renderActiveOverrides(overrides) {

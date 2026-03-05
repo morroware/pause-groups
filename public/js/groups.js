@@ -1,5 +1,6 @@
 /**
  * Pause group management: list, create, edit, delete.
+ * Enhanced game picker for managing hundreds of games.
  */
 (function() {
     App.registerRoute('#/groups', { render: renderGroupList });
@@ -182,47 +183,169 @@
         }
         container.appendChild(catList);
 
-        // Individual games
+        // Individual Games — Enhanced Picker
         container.appendChild(App.el('div', { className: 'form-group mt-2' }, [
             App.el('label', { className: 'form-label', textContent: 'Individual Games' }),
-            App.el('p', { className: 'form-help', textContent: 'Select specific games not covered by categories above.' })
+            App.el('p', { className: 'form-help', textContent: 'Select specific games not covered by categories above. Use search and filters for large game lists.' })
         ]));
 
-        const gameSearch = App.el('input', {
-            className: 'form-input', type: 'text', placeholder: 'Search games...',
-            style: { marginBottom: '0.5rem' }
-        });
-        container.appendChild(gameSearch);
+        // Build enhanced game picker
+        const pickerContainer = App.el('div', { className: 'game-picker-container' });
 
-        const gameListEl = App.el('div', { className: 'dual-pane-list', id: 'game-picker' });
-        container.appendChild(gameListEl);
+        // Toolbar
+        const pickerToolbar = App.el('div', { className: 'game-picker-toolbar' });
+
+        const gameSearch = App.el('input', {
+            className: 'form-input', type: 'text', placeholder: 'Search games...'
+        });
+
+        const showFilter = App.el('select', {
+            className: 'form-select',
+            style: { width: 'auto', minWidth: '130px', padding: '0.35rem 0.6rem', fontSize: '0.82rem' }
+        });
+        showFilter.appendChild(App.el('option', { value: 'all', textContent: 'All Games' }));
+        showFilter.appendChild(App.el('option', { value: 'selected', textContent: 'Selected Only' }));
+        showFilter.appendChild(App.el('option', { value: 'unselected', textContent: 'Unselected Only' }));
+
+        const selectAllBtn = App.el('button', {
+            className: 'btn btn-sm btn-secondary',
+            textContent: 'Select Visible',
+            onClick: () => {
+                const visible = getVisibleGames(allGames, gameSearch.value.toLowerCase(), showFilter.value, selectedGames);
+                visible.forEach(g => selectedGames.add(g.game_id));
+                renderGamePicker();
+            }
+        });
+
+        const deselectAllBtn = App.el('button', {
+            className: 'btn btn-sm btn-ghost',
+            textContent: 'Deselect Visible',
+            onClick: () => {
+                const visible = getVisibleGames(allGames, gameSearch.value.toLowerCase(), showFilter.value, selectedGames);
+                visible.forEach(g => selectedGames.delete(g.game_id));
+                renderGamePicker();
+            }
+        });
+
+        const statsEl = App.el('div', { className: 'game-picker-stats', id: 'picker-stats' });
+
+        pickerToolbar.appendChild(gameSearch);
+        pickerToolbar.appendChild(showFilter);
+        pickerToolbar.appendChild(selectAllBtn);
+        pickerToolbar.appendChild(deselectAllBtn);
+        pickerToolbar.appendChild(statsEl);
+        pickerContainer.appendChild(pickerToolbar);
+
+        // List
+        const gameListEl = App.el('div', { className: 'game-picker-list', id: 'game-picker' });
+        pickerContainer.appendChild(gameListEl);
+
+        // Footer
+        const footerEl = App.el('div', { className: 'game-picker-footer', id: 'picker-footer' });
+        pickerContainer.appendChild(footerEl);
+
+        container.appendChild(pickerContainer);
+
+        // Picker page state
+        let pickerPage = 1;
+        const pickerPageSize = 50;
+
+        function getVisibleGames(games, filter, showMode, selected) {
+            let sorted = [...games].sort((a, b) => a.game_name.localeCompare(b.game_name));
+            if (filter) {
+                sorted = sorted.filter(g => g.game_name.toLowerCase().includes(filter));
+            }
+            if (showMode === 'selected') {
+                sorted = sorted.filter(g => selected.has(g.game_id));
+            } else if (showMode === 'unselected') {
+                sorted = sorted.filter(g => !selected.has(g.game_id));
+            }
+            return sorted;
+        }
 
         function renderGamePicker() {
             gameListEl.innerHTML = '';
             const filter = gameSearch.value.toLowerCase();
-            const sorted = [...allGames].sort((a, b) => a.game_name.localeCompare(b.game_name));
-            const filtered = filter ? sorted.filter(g => g.game_name.toLowerCase().includes(filter)) : sorted;
+            const showMode = showFilter.value;
 
-            filtered.forEach(game => {
+            const visible = getVisibleGames(allGames, filter, showMode, selectedGames);
+            const totalVisible = visible.length;
+            const totalPages = Math.max(1, Math.ceil(totalVisible / pickerPageSize));
+            if (pickerPage > totalPages) pickerPage = totalPages;
+            if (pickerPage < 1) pickerPage = 1;
+
+            const startIdx = (pickerPage - 1) * pickerPageSize;
+            const pageItems = visible.slice(startIdx, startIdx + pickerPageSize);
+
+            pageItems.forEach(game => {
+                const item = App.el('div', { className: 'game-picker-item' });
                 const cb = App.el('input', { type: 'checkbox', value: game.game_id });
                 cb.checked = selectedGames.has(game.game_id);
                 cb.addEventListener('change', () => {
                     if (cb.checked) selectedGames.add(game.game_id);
                     else selectedGames.delete(game.game_id);
+                    updatePickerStats();
                 });
-                gameListEl.appendChild(App.el('label', { className: 'checkbox-label' }, [
-                    cb,
-                    App.el('span', { textContent: game.game_name }),
-                    App.el('span', { className: 'text-xs text-muted', style: { marginLeft: 'auto' }, textContent: game.operation_status })
-                ]));
+                item.appendChild(cb);
+                item.appendChild(App.el('span', { className: 'game-name', textContent: game.game_name }));
+                item.appendChild(App.el('span', { className: 'game-status', textContent: game.operation_status }));
+                gameListEl.appendChild(item);
             });
 
-            if (filtered.length === 0) {
-                gameListEl.appendChild(App.el('p', { className: 'text-muted text-sm', style: { padding: '0.5rem' }, textContent: 'No games found.' }));
+            if (pageItems.length === 0) {
+                gameListEl.appendChild(App.el('div', {
+                    className: 'empty-state',
+                    style: { padding: '1.5rem' }
+                }, [
+                    App.el('div', { className: 'empty-state-text', textContent: 'No games match the current filter.' })
+                ]));
+            }
+
+            updatePickerStats();
+
+            // Footer with pagination
+            footerEl.innerHTML = '';
+            if (totalVisible > 0) {
+                var showing = App.el('span', {
+                    textContent: 'Showing ' + (startIdx + 1) + '-' + Math.min(startIdx + pickerPageSize, totalVisible) + ' of ' + totalVisible
+                });
+                footerEl.appendChild(showing);
+            }
+
+            if (totalPages > 1) {
+                var pageControls = App.el('div', { className: 'flex-center gap-sm' });
+                pageControls.appendChild(App.el('button', {
+                    className: 'btn btn-ghost btn-sm',
+                    textContent: '\u2039 Prev',
+                    disabled: pickerPage <= 1,
+                    onClick: () => { pickerPage--; renderGamePicker(); }
+                }));
+                pageControls.appendChild(App.el('span', {
+                    className: 'text-xs',
+                    textContent: pickerPage + ' / ' + totalPages
+                }));
+                pageControls.appendChild(App.el('button', {
+                    className: 'btn btn-ghost btn-sm',
+                    textContent: 'Next \u203A',
+                    disabled: pickerPage >= totalPages,
+                    onClick: () => { pickerPage++; renderGamePicker(); }
+                }));
+                footerEl.appendChild(pageControls);
             }
         }
 
-        gameSearch.addEventListener('input', renderGamePicker);
+        function updatePickerStats() {
+            const el = document.getElementById('picker-stats');
+            if (el) {
+                el.innerHTML = '';
+                el.appendChild(App.el('span', { textContent: '' }));
+                el.appendChild(App.el('strong', { textContent: String(selectedGames.size) }));
+                el.appendChild(document.createTextNode(' of ' + allGames.length + ' selected'));
+            }
+        }
+
+        gameSearch.addEventListener('input', () => { pickerPage = 1; renderGamePicker(); });
+        showFilter.addEventListener('change', () => { pickerPage = 1; renderGamePicker(); });
         renderGamePicker();
 
         // Actions
