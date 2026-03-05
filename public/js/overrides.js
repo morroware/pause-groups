@@ -1,10 +1,16 @@
 /**
  * Override management: active/upcoming/expired sections, create, delete.
+ *
+ * Auto-refreshes every 15s when active overrides exist, and triggers
+ * enforce + refresh at the exact moment an override expires.
  */
 (function() {
     App.registerRoute('#/overrides', { render: renderOverrides });
 
-    async function renderOverrides(container) {
+    var refreshInterval = null;
+    var expiryTimers = [];
+
+    function renderOverrides(container) {
         container.appendChild(App.el('div', { className: 'page-header' }, [
             App.el('h1', { className: 'page-title', textContent: 'Schedule Overrides' }),
             App.el('button', {
@@ -13,31 +19,73 @@
             })
         ]));
 
-        const content = App.el('div', { id: 'overrides-content' });
+        var content = App.el('div', { id: 'overrides-content' });
         content.appendChild(App.loading());
         container.appendChild(content);
 
-        await loadOverrides();
+        loadOverrides();
+
+        return function cleanup() {
+            if (refreshInterval) clearInterval(refreshInterval);
+            refreshInterval = null;
+            expiryTimers.forEach(function(t) { clearTimeout(t); });
+            expiryTimers = [];
+        };
     }
 
     async function loadOverrides() {
-        const content = document.getElementById('overrides-content');
+        var content = document.getElementById('overrides-content');
         if (!content) return;
 
         try {
-            const data = await API.get('overrides');
+            var data = await API.get('overrides');
             content.innerHTML = '';
-            renderSection(content, 'Active Now', data.active || [], 'badge-active');
+            var active = data.active || [];
+            renderSection(content, 'Active Now', active, 'badge-active');
             renderSection(content, 'Upcoming', data.upcoming || [], 'badge-info');
             renderSection(content, 'Expired', data.expired || [], 'badge-inactive');
+
+            // Auto-refresh when overrides are active
+            setupAutoRefresh(active);
         } catch (err) {
             content.innerHTML = '';
             App.toast(err.message, 'error');
         }
     }
 
+    function setupAutoRefresh(activeOverrides) {
+        // Clear existing timers
+        if (refreshInterval) clearInterval(refreshInterval);
+        refreshInterval = null;
+        expiryTimers.forEach(function(t) { clearTimeout(t); });
+        expiryTimers = [];
+
+        if (activeOverrides.length > 0) {
+            // Poll every 15s while overrides are active
+            refreshInterval = setInterval(loadOverrides, 15000);
+
+            // Set precise timers for each override expiry
+            var now = Date.now();
+            activeOverrides.forEach(function(o) {
+                var endMs = new Date(o.end_datetime.replace(' ', 'T')).getTime();
+                var delay = endMs - now;
+
+                if (delay > 0 && delay < 3600000) {
+                    var timer = setTimeout(function() {
+                        // Call enforce for the group then refresh
+                        if (o.pause_group_id) {
+                            API.post('groups/' + o.pause_group_id + '/enforce').catch(function() {});
+                        }
+                        setTimeout(loadOverrides, 1500);
+                    }, delay + 1000);
+                    expiryTimers.push(timer);
+                }
+            });
+        }
+    }
+
     function renderSection(container, title, overrides, badgeCls) {
-        const section = App.el('div', { className: 'override-section' });
+        var section = App.el('div', { className: 'override-section' });
         section.appendChild(App.el('div', { className: 'override-section-title' }, [
             App.el('span', { textContent: title }),
             App.el('span', { className: 'badge ' + badgeCls, textContent: String(overrides.length) })
@@ -46,8 +94,8 @@
         if (overrides.length === 0) {
             section.appendChild(App.el('p', { className: 'text-muted text-sm', style: { padding: '0.5rem 0' }, textContent: 'None.' }));
         } else {
-            overrides.forEach(o => {
-                const card = App.el('div', { className: 'override-card' }, [
+            overrides.forEach(function(o) {
+                var card = App.el('div', { className: 'override-card' }, [
                     App.el('div', { className: 'override-info' }, [
                         App.el('div', { className: 'flex-center gap-sm' }, [
                             App.el('span', { className: 'override-name', textContent: o.name }),
@@ -63,7 +111,7 @@
                         title === 'Active Now' ? App.el('span', { className: 'override-countdown', textContent: 'ends ' + App.formatRelative(o.end_datetime) }) : null,
                         title !== 'Expired' ? App.el('button', {
                             className: 'btn btn-ghost btn-sm text-danger', textContent: 'Delete',
-                            onClick: () => deleteOverride(o.id, title === 'Active Now')
+                            onClick: function() { deleteOverride(o.id, title === 'Active Now'); }
                         }) : null
                     ].filter(Boolean))
                 ]);
@@ -76,19 +124,19 @@
 
     async function showCreateForm() {
         try {
-            const groupData = await API.get('groups');
-            const groups = groupData.groups || [];
+            var groupData = await API.get('groups');
+            var groups = groupData.groups || [];
 
             if (groups.length === 0) {
                 App.toast('Create a pause group first.', 'warning');
                 return;
             }
 
-            const form = App.el('div');
+            var form = App.el('div');
 
             // Group selector
-            const groupSelect = App.el('select', { className: 'form-select' });
-            groups.forEach(g => {
+            var groupSelect = App.el('select', { className: 'form-select' });
+            groups.forEach(function(g) {
                 groupSelect.appendChild(App.el('option', { value: String(g.id), textContent: g.name }));
             });
             form.appendChild(App.el('div', { className: 'form-group' }, [
@@ -97,14 +145,14 @@
             ]));
 
             // Name
-            const nameInput = App.el('input', { className: 'form-input', type: 'text', placeholder: 'e.g., Birthday Party Override' });
+            var nameInput = App.el('input', { className: 'form-input', type: 'text', placeholder: 'e.g., Birthday Party Override' });
             form.appendChild(App.el('div', { className: 'form-group' }, [
                 App.el('label', { className: 'form-label', textContent: 'Override Name' }),
                 nameInput
             ]));
 
             // Action
-            const actionSelect = App.el('select', { className: 'form-select' });
+            var actionSelect = App.el('select', { className: 'form-select' });
             actionSelect.appendChild(App.el('option', { value: 'unpause', textContent: 'Unpause \u2014 Force games ON (override a pause schedule)' }));
             actionSelect.appendChild(App.el('option', { value: 'pause', textContent: 'Pause \u2014 Force games OFF (e.g., maintenance)' }));
             form.appendChild(App.el('div', { className: 'form-group' }, [
@@ -113,21 +161,21 @@
             ]));
 
             // Datetime range
-            const now = new Date();
-            const pad = (n) => String(n).padStart(2, '0');
-            const nowStr = now.getFullYear() + '-' + pad(now.getMonth()+1) + '-' + pad(now.getDate()) + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes());
+            var now = new Date();
+            var pad = function(n) { return String(n).padStart(2, '0'); };
+            var nowStr = now.getFullYear() + '-' + pad(now.getMonth()+1) + '-' + pad(now.getDate()) + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes());
 
-            const startInput = App.el('input', { className: 'form-input', type: 'text', value: nowStr, placeholder: 'YYYY-MM-DD HH:MM' });
-            const endInput = App.el('input', { className: 'form-input', type: 'text', placeholder: 'YYYY-MM-DD HH:MM' });
+            var startInput = App.el('input', { className: 'form-input', type: 'text', value: nowStr, placeholder: 'YYYY-MM-DD HH:MM' });
+            var endInput = App.el('input', { className: 'form-input', type: 'text', placeholder: 'YYYY-MM-DD HH:MM' });
             form.appendChild(App.el('div', { className: 'form-row' }, [
                 App.el('div', { className: 'form-group' }, [App.el('label', { className: 'form-label', textContent: 'Start (YYYY-MM-DD HH:MM)' }), startInput]),
                 App.el('div', { className: 'form-group' }, [App.el('label', { className: 'form-label', textContent: 'End (YYYY-MM-DD HH:MM)' }), endInput])
             ]));
 
-            const footer = App.el('div', { className: 'flex gap-sm' }, [
-                App.el('button', { className: 'btn btn-secondary', textContent: 'Cancel', onClick: () => App.hideModal() }),
-                App.el('button', { className: 'btn btn-primary', textContent: 'Create Override', onClick: async () => {
-                    const name = nameInput.value.trim();
+            var footer = App.el('div', { className: 'flex gap-sm' }, [
+                App.el('button', { className: 'btn btn-secondary', textContent: 'Cancel', onClick: function() { App.hideModal(); } }),
+                App.el('button', { className: 'btn btn-primary', textContent: 'Create Override', onClick: async function() {
+                    var name = nameInput.value.trim();
                     if (!name) { App.toast('Name is required.', 'error'); return; }
                     if (!startInput.value || !endInput.value) { App.toast('Both start and end times are required.', 'error'); return; }
 
@@ -153,10 +201,10 @@
     }
 
     async function deleteOverride(id, isActive) {
-        const msg = isActive
+        var msg = isActive
             ? 'Delete this active override? Games will revert to their scheduled state.'
             : 'Delete this override?';
-        const yes = await App.confirm(msg);
+        var yes = await App.confirm(msg);
         if (!yes) return;
         try {
             await API.del('overrides/' + id);

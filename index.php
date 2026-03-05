@@ -37,17 +37,38 @@ header('Referrer-Policy: strict-origin-when-cross-origin');
 if ($path === 'api' || strpos($path, 'api/') === 0) {
     header('Content-Type: application/json; charset=utf-8');
 
-    // Safety net: execute any missed scheduled actions (at most once per minute).
-    // This catches actions whose at-jobs failed silently.
+    // Safety net — two tiers:
+    //
+    // Tier 1 (every API call): Fast, DB-only check for recently-expired
+    // overrides whose state hasn't been corrected yet.  This is the primary
+    // mechanism that ensures override END transitions fire promptly even
+    // when at-jobs and the cron watchdog are unavailable.
+    //
+    // Tier 2 (throttled, every 15s): Full missed-action execution and
+    // live state enforcement including a CenterEdge cache sync.
+    require_once __DIR__ . '/lib/centeredge_client.php';
+    require_once __DIR__ . '/lib/scheduler.php';
+
+    // Tier 1: targeted expired-override enforcement (fast — cache-only unless change needed)
+    try {
+        Scheduler::enforceExpiredOverrides(300);
+    } catch (Exception $e) {
+        error_log('Expired-override enforcement failed: ' . $e->getMessage());
+    }
+
+    // Tier 2: full enforcement (throttled to avoid hammering CenterEdge)
     $missedCheckFile = __DIR__ . '/data/.last_missed_check';
-    if (!file_exists($missedCheckFile) || (time() - filemtime($missedCheckFile)) >= 60) {
+    if (!file_exists($missedCheckFile) || (time() - filemtime($missedCheckFile)) >= 15) {
         @touch($missedCheckFile);
         try {
-            require_once __DIR__ . '/lib/centeredge_client.php';
-            require_once __DIR__ . '/lib/scheduler.php';
             Scheduler::executeMissedActions();
         } catch (Exception $e) {
             error_log('Missed-action check failed: ' . $e->getMessage());
+        }
+        try {
+            Scheduler::enforceCurrentStates();
+        } catch (Exception $e) {
+            error_log('State enforcement failed: ' . $e->getMessage());
         }
     }
 
