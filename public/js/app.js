@@ -6,6 +6,9 @@ const App = {
     routes: {},
     currentCleanup: null,
     toastContainer: null,
+    theme: 'dark',
+    themeToggleBtn: null,
+    appTimezone: 'UTC',
 
     DAYS: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
     DAYS_SHORT: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
@@ -13,6 +16,8 @@ const App = {
     init() {
         API.init(window.APP_CONFIG);
         this.currentUser = window.APP_CONFIG.user;
+        this.appTimezone = window.APP_CONFIG.timezone || 'UTC';
+        this.initTheme();
 
         window.addEventListener('hashchange', () => this.route());
 
@@ -21,7 +26,58 @@ const App = {
         this.toastContainer.className = 'toast-container';
         document.body.appendChild(this.toastContainer);
 
+        this.createThemeToggle();
+
         this.route();
+    },
+
+    initTheme() {
+        const stored = localStorage.getItem('pause-groups-theme');
+        this.theme = stored === 'light' ? 'light' : 'dark';
+        this.applyTheme();
+    },
+
+    applyTheme() {
+        document.documentElement.setAttribute('data-theme', this.theme);
+        if (this.themeToggleBtn) {
+            this.themeToggleBtn.textContent = this.theme === 'dark' ? '\u263D Light mode' : '\u2600 Dark mode';
+        }
+    },
+
+    toggleTheme() {
+        this.theme = this.theme === 'dark' ? 'light' : 'dark';
+        localStorage.setItem('pause-groups-theme', this.theme);
+        this.applyTheme();
+    },
+
+    createThemeToggle() {
+        this.themeToggleBtn = this.el('button', {
+            className: 'theme-toggle',
+            type: 'button',
+            title: 'Toggle light/dark theme',
+            'aria-label': 'Toggle light or dark mode',
+            onClick: () => this.toggleTheme()
+        });
+        this.applyTheme();
+    },
+
+
+    mountThemeToggle() {
+        if (!this.themeToggleBtn) return;
+        const host = this.currentUser
+            ? document.querySelector('.sidebar-brand')
+            : document.querySelector('.login-card');
+        if (host) {
+            host.appendChild(this.themeToggleBtn);
+            this.themeToggleBtn.classList.add('theme-toggle-inline');
+        }
+    },
+
+    setTimezone(timezone) {
+        this.appTimezone = timezone || 'UTC';
+        if (window.APP_CONFIG) {
+            window.APP_CONFIG.timezone = this.appTimezone;
+        }
     },
 
     registerRoute(hash, handler) {
@@ -46,6 +102,8 @@ const App = {
             window.location.hash = '#/dashboard';
             return;
         }
+
+        this.setAppStateClass();
 
         // Find matching route
         let handler = null;
@@ -84,6 +142,14 @@ const App = {
                 this.currentCleanup = cleanup;
             }
         }
+
+        this.mountThemeToggle();
+    },
+
+
+    setAppStateClass() {
+        document.body.classList.toggle('app-authenticated', !!this.currentUser);
+        document.body.classList.toggle('app-guest', !this.currentUser);
     },
 
     matchRoute(pattern, hash) {
@@ -282,17 +348,33 @@ const App = {
     },
 
     // ---- Formatting Utilities ----
+    toUtcDate(dateStr) {
+        if (!dateStr) return null;
+        if (dateStr instanceof Date) return dateStr;
+        const normalized = String(dateStr).trim().replace(' ', 'T');
+        if (!normalized) return null;
+        const hasTimezone = /[zZ]|[+-]\d{2}:?\d{2}$/.test(normalized);
+        const value = hasTimezone ? normalized : normalized + 'Z';
+        const d = new Date(value);
+        return Number.isNaN(d.getTime()) ? null : d;
+    },
+
     formatDate(dateStr) {
         if (!dateStr) return '-';
-        const d = new Date(dateStr + (dateStr.includes('T') ? '' : 'T00:00:00'));
-        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        const d = this.toUtcDate(dateStr);
+        if (!d) return '-';
+        return new Intl.DateTimeFormat('en-US', {
+            month: 'short', day: 'numeric', year: 'numeric', timeZone: this.appTimezone
+        }).format(d);
     },
 
     formatDatetime(dateStr) {
         if (!dateStr) return '-';
-        const d = new Date(dateStr.replace(' ', 'T'));
-        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' +
-               d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+        const d = this.toUtcDate(dateStr);
+        if (!d) return '-';
+        return new Intl.DateTimeFormat('en-US', {
+            month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: this.appTimezone
+        }).format(d);
     },
 
     formatTime(timeStr) {
@@ -307,7 +389,8 @@ const App = {
     formatRelative(dateStr) {
         if (!dateStr) return '';
         const now = new Date();
-        const d = new Date(dateStr.replace(' ', 'T'));
+        const d = this.toUtcDate(dateStr);
+        if (!d) return '';
         const diffMs = d - now;
         const diffMin = Math.round(diffMs / 60000);
         if (diffMin < 0) return Math.abs(diffMin) + 'm ago';

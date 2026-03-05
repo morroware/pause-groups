@@ -258,6 +258,17 @@ $user = Auth::check();
 $userJson = $user ? json_encode($user) : 'null';
 $csrfJson = json_encode($csrfToken);
 $basePathJson = json_encode($basePath);
+$appTimezone = DEFAULT_TIMEZONE;
+try {
+    $configuredTz = DB::getConfig('timezone');
+    if ($configuredTz) {
+        $appTimezone = $configuredTz;
+    }
+} catch (Exception $e) {
+    // Keep default timezone if config read fails
+}
+$appTimezoneJson = json_encode($appTimezone);
+
 
 ?><!DOCTYPE html>
 <html lang="en">
@@ -279,7 +290,8 @@ $basePathJson = json_encode($basePath);
         window.APP_CONFIG = {
             basePath: <?= $basePathJson ?>,
             csrfToken: <?= $csrfJson ?>,
-            user: <?= $userJson ?>
+            user: <?= $userJson ?>,
+            timezone: <?= $appTimezoneJson ?>
         };
     </script>
     <script src="<?= htmlspecialchars($basePath) ?>/public/js/api.js"></script>

@@ -256,7 +256,7 @@
             var syncEl = document.getElementById('last-sync');
             if (syncEl) {
                 syncEl.textContent = gamesData.last_synced
-                    ? 'Last synced: ' + App.formatDatetime(gamesData.last_synced) + ' UTC'
+                    ? 'Last synced: ' + App.formatDatetime(gamesData.last_synced) + ' (' + App.appTimezone + ')' 
                     : 'Not yet synced';
             }
         } catch (err) {

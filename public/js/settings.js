@@ -211,6 +211,7 @@
             onClick: async () => {
                 try {
                     await API.put('settings', { timezone: tzSelect.value });
+                    App.setTimezone(tzSelect.value);
                     App.toast('Timezone updated to ' + tzSelect.value + '.', 'success');
                 } catch (err) { App.toast(err.message, 'error'); }
             }
