@@ -141,26 +141,29 @@ function createOverride(?array $input, array $user): void {
     triggerReplan();
 
     // Verify the override's end-time action was actually created.
-    // If the replan was skipped due to lock contention, ensure the group
-    // will still transition correctly by queuing enforcement.
-    if (file_exists(__DIR__ . '/../lib/scheduler.php')) {
-        require_once __DIR__ . '/../lib/scheduler.php';
-        $tz2 = DB::getConfig('timezone') ?? DEFAULT_TIMEZONE;
-        $today = (new DateTime('now', new DateTimeZone($tz2)))->format('Y-m-d');
-        $endDate = substr($endDatetime, 0, 10);
-        $endTimeOnly = substr($endDatetime, 11, 5);
+    // Non-critical — just logs a warning if replan was skipped.
+    try {
+        if (file_exists(__DIR__ . '/../lib/scheduler.php')) {
+            require_once __DIR__ . '/../lib/scheduler.php';
+            $tz2 = DB::getConfig('timezone') ?? DEFAULT_TIMEZONE;
+            $today = (new DateTime('now', new DateTimeZone($tz2)))->format('Y-m-d');
+            $endDate = substr($endDatetime, 0, 10);
+            $endTimeOnly = substr($endDatetime, 11, 5);
 
-        if ($endDate === $today) {
-            $endAction = DB::queryOne(
-                'SELECT id FROM scheduled_actions
-                 WHERE pause_group_id = :p0 AND scheduled_date = :p1
-                   AND scheduled_time = :p2 AND executed = 0',
-                [$groupId, $today, $endTimeOnly]
-            );
-            if (!$endAction) {
-                error_log("Override #{$overrideId}: end-time action at {$endTimeOnly} was NOT created (replan may have failed). Will rely on API safety net.");
+            if ($endDate === $today) {
+                $endAction = DB::queryOne(
+                    'SELECT id FROM scheduled_actions
+                     WHERE pause_group_id = :p0 AND scheduled_date = :p1
+                       AND scheduled_time = :p2 AND executed = 0',
+                    [$groupId, $today, $endTimeOnly]
+                );
+                if (!$endAction) {
+                    error_log("Override #{$overrideId}: end-time action at {$endTimeOnly} was NOT created (replan may have failed). Will rely on API safety net.");
+                }
             }
         }
+    } catch (\Throwable $e) {
+        error_log('Override end-time verification failed: ' . $e->getMessage());
     }
 
     http_response_code(201);

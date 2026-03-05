@@ -52,7 +52,7 @@ if ($path === 'api' || strpos($path, 'api/') === 0) {
     // Tier 1: targeted expired-override enforcement (fast — cache-only unless change needed)
     try {
         Scheduler::enforceExpiredOverrides(300);
-    } catch (Exception $e) {
+    } catch (\Throwable $e) {
         error_log('Expired-override enforcement failed: ' . $e->getMessage());
     }
 
@@ -62,12 +62,12 @@ if ($path === 'api' || strpos($path, 'api/') === 0) {
         @touch($missedCheckFile);
         try {
             Scheduler::executeMissedActions();
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             error_log('Missed-action check failed: ' . $e->getMessage());
         }
         try {
             Scheduler::enforceCurrentStates();
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             error_log('State enforcement failed: ' . $e->getMessage());
         }
     }
