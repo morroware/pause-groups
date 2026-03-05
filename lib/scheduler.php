@@ -47,18 +47,21 @@ class Scheduler {
                 [$groupId, $date]
             );
 
-            // Build transition points from schedules
+            // Build transition points from schedules.
+            // Schedule windows define when games are ACTIVE (unpaused).
+            // At start_time → unpause (games become active)
+            // At end_time   → pause   (active window ends)
             $transitions = [];
             foreach ($schedules as $sched) {
                 $transitions[] = [
                     'time'   => $sched['start_time'],
-                    'action' => 'pause',
+                    'action' => 'unpause',
                     'source' => 'schedule',
                     'priority' => 0,
                 ];
                 $transitions[] = [
                     'time'   => $sched['end_time'],
-                    'action' => 'unpause',
+                    'action' => 'pause',
                     'source' => 'schedule',
                     'priority' => 0,
                 ];
@@ -103,12 +106,14 @@ class Scheduler {
                         }
                     }
 
-                    // No other override active — fall back to the recurring schedule
+                    // No other override active — fall back to the recurring schedule.
+                    // Default is paused (outside schedule windows).
+                    // If inside a schedule window, restore to unpause (active).
                     if ($restoreAction === null) {
-                        $restoreAction = 'unpause'; // default: enabled
+                        $restoreAction = 'pause'; // default: paused outside schedule windows
                         foreach ($schedules as $sched) {
                             if ($sched['start_time'] <= $endTime && $sched['end_time'] > $endTime) {
-                                $restoreAction = 'pause';
+                                $restoreAction = 'unpause'; // inside active window
                                 break;
                             }
                         }
@@ -362,7 +367,9 @@ class Scheduler {
                 [$groupId, $nowStr]
             );
 
-            $desiredAction = 'unpause';
+            // Default: paused (outside any schedule window).
+            // Schedule windows define active (unpaused) hours.
+            $desiredAction = 'pause';
             $source = 'watchdog';
 
             if ($activeOverride) {
@@ -377,7 +384,7 @@ class Scheduler {
                     [$groupId, $todayDow, $nowTime]
                 );
                 if ($activeSchedule) {
-                    $desiredAction = 'pause';
+                    $desiredAction = 'unpause';
                     $source = 'schedule';
                 }
             }
@@ -420,7 +427,9 @@ class Scheduler {
             [$groupId, $nowStr]
         );
 
-        $desiredAction = 'unpause';
+        // Default: paused (outside any schedule window).
+        // Schedule windows define active (unpaused) hours.
+        $desiredAction = 'pause';
         $source = 'schedule';
 
         if ($activeOverride) {
@@ -435,7 +444,7 @@ class Scheduler {
                 [$groupId, $todayDow, $nowTime]
             );
             if ($activeSchedule) {
-                $desiredAction = 'pause';
+                $desiredAction = 'unpause';
                 $source = 'schedule';
             }
         }
