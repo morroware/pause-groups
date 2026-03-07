@@ -37,9 +37,8 @@ This review additionally found reliability risks in setup validation: installer 
 
 ### High Priority
 
-1. **Credential encryption uses AES-CBC without an integrity tag (MAC/AEAD).**
-   - Current encryption in `lib/crypto.php` is confidentiality-only.
-   - Recommendation: migrate to AEAD (e.g., `aes-256-gcm` or libsodium sealed boxes) with versioned payloads for backward compatibility.
+1. ~~**Credential encryption uses AES-CBC without an integrity tag (MAC/AEAD).**~~ **RESOLVED.**
+   - `lib/crypto.php` now implements encrypt-then-MAC using HMAC-SHA256 with separate encryption and MAC sub-keys derived via HKDF-like HMAC derivation from the master key. Integrity is verified before decryption. Backward-compatible decryption of legacy (pre-HMAC) data is preserved.
 
 2. **No explicit brute-force throttling strategy for login endpoint beyond fixed sleep(1).**
    - Recommendation: add IP+username rate limiting (e.g., sliding window in SQLite) and optional temporary lockouts after repeated failures.
@@ -81,7 +80,7 @@ This review additionally found reliability risks in setup validation: installer 
 
 2. **Security uplift (short sprint):**
    - Add login rate limiter.
-   - Migrate credential encryption to AEAD with backward-compatible decrypt path.
+   - ~~Migrate credential encryption to AEAD with backward-compatible decrypt path.~~ Done — encrypt-then-MAC (HMAC-SHA256) implemented.
 
 3. **Reliability uplift (short sprint):**
    - Add a small test harness for key API and scheduler paths.
