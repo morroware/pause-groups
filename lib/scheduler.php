@@ -538,7 +538,12 @@ class Scheduler {
      */
     public static function executeImmediate(int $groupId, string $action, string $source = 'manual'): array {
         $desiredStatus = ($action === 'pause') ? 'paused' : 'enabled';
-        $result = self::executeStateChange($groupId, $desiredStatus, $source);
+        // Skip the full CenterEdge sync for manual actions — the cache is
+        // at most 30s stale from dashboard polling, and the patch call itself
+        // will confirm the actual new state.  This avoids an expensive API
+        // round-trip that adds ~5-10s of latency to every button press.
+        $skipSync = ($source === 'manual');
+        $result = self::executeStateChange($groupId, $desiredStatus, $source, !$skipSync);
 
         // Record manual override so the watchdog and enforcement logic
         // respect the operator's intent until the next scheduled transition.
