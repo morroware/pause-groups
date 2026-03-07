@@ -3,9 +3,11 @@
  *
  * Polling strategy:
  *   - Default: every 30 seconds
+ *   - Scheduled transition imminent (< 2 min): every 5 seconds
  *   - Active override exists: every 10 seconds
  *   - Override about to expire (< 2 min): every 5 seconds
  *   - Override just expired: immediate enforce call + refresh
+ *   - Scheduled transition fires: immediate enforce call + refresh
  *
  * Scalable UI: supports hundreds of games with table view,
  * pagination, filtering, and sorting.
@@ -16,12 +18,14 @@
     // Polling constants
     var INTERVAL_DEFAULT = 30000;
     var INTERVAL_OVERRIDE_ACTIVE = 10000;
+    var INTERVAL_TRANSITION_IMMINENT = 5000;
     var INTERVAL_OVERRIDE_EXPIRING = 5000;
 
     // Module-level state
     var allGames = [];
     var refreshInterval = null;
     var expiryTimers = [];
+    var transitionTimers = [];
     var currentInterval = INTERVAL_DEFAULT;
 
     // View state
@@ -39,12 +43,13 @@
         refreshInterval = setInterval(loadDashboard, currentInterval);
     }
 
-    function adjustPollingRate(activeOverrides) {
+    function adjustPollingRate(activeOverrides, groups) {
         var newInterval = INTERVAL_DEFAULT;
+        var now = Date.now();
 
+        // Check override expiry proximity
         if (activeOverrides && activeOverrides.length > 0) {
             var soonestMs = Infinity;
-            var now = Date.now();
             activeOverrides.forEach(function(o) {
                 var endMs = new Date(o.end_datetime.replace(' ', 'T')).getTime();
                 var remaining = endMs - now;
@@ -58,10 +63,35 @@
             }
         }
 
+        // Check scheduled transition proximity
+        if (groups && groups.length > 0) {
+            groups.forEach(function(g) {
+                if (!g.next_transition) return;
+                var transMs = todayTimeToMs(g.next_transition.time);
+                if (transMs === null) return;
+                var remaining = transMs - now;
+                if (remaining > 0 && remaining <= 120000) {
+                    newInterval = Math.min(newInterval, INTERVAL_TRANSITION_IMMINENT);
+                }
+            });
+        }
+
         if (newInterval !== currentInterval) {
             currentInterval = newInterval;
             scheduleNextPoll();
         }
+    }
+
+    /**
+     * Convert a HH:MM time string (in app timezone) to a Date.now()-comparable
+     * millisecond timestamp for today.
+     */
+    function todayTimeToMs(timeStr) {
+        if (!timeStr || timeStr.indexOf(':') === -1) return null;
+        var parts = timeStr.split(':');
+        var d = new Date();
+        d.setHours(parseInt(parts[0], 10), parseInt(parts[1], 10), 0, 0);
+        return d.getTime();
     }
 
     function scheduleExpiryTimers(activeOverrides) {
@@ -89,6 +119,55 @@
                 expiryTimers.push(timer2);
             }
         });
+    }
+
+    /**
+     * Schedule precise timers for upcoming scheduled transitions so the UI
+     * refreshes immediately when a scheduled pause/unpause fires, rather
+     * than waiting up to 30s for the next poll.
+     */
+    function scheduleTransitionTimers(groups) {
+        transitionTimers.forEach(function(t) { clearTimeout(t); });
+        transitionTimers = [];
+
+        if (!groups || groups.length === 0) return;
+
+        var now = Date.now();
+        groups.forEach(function(g) {
+            if (!g.next_transition || !g.is_active) return;
+            var transMs = todayTimeToMs(g.next_transition.time);
+            if (transMs === null) return;
+            var delay = transMs - now;
+
+            // Only schedule timers for transitions within the next hour
+            if (delay > 0 && delay < 3600000) {
+                // Fire 1s after scheduled time to let the at-job/server execute first
+                var timer = setTimeout(function() {
+                    onScheduledTransition(g);
+                }, delay + 1000);
+                transitionTimers.push(timer);
+
+                // Follow-up refresh 4s after transition for full consistency
+                var timer2 = setTimeout(function() {
+                    loadDashboard();
+                }, delay + 4000);
+                transitionTimers.push(timer2);
+            }
+        });
+    }
+
+    async function onScheduledTransition(group) {
+        var groupId = group.id;
+        if (groupId) {
+            try {
+                // Enforce correct state — this acts as a safety net in case
+                // the at-job hasn't fired yet, and refreshes the cache.
+                await API.post('groups/' + groupId + '/enforce');
+            } catch (err) {
+                // Enforcement failed — the poll will catch up
+            }
+        }
+        await loadDashboard();
     }
 
     async function onOverrideExpired(override) {
@@ -209,6 +288,8 @@
             refreshInterval = null;
             expiryTimers.forEach(function(t) { clearTimeout(t); });
             expiryTimers = [];
+            transitionTimers.forEach(function(t) { clearTimeout(t); });
+            transitionTimers = [];
         };
     }
 
@@ -247,11 +328,16 @@
             var badge = document.getElementById('game-count-badge');
             if (badge) badge.textContent = allGames.length + ' game' + (allGames.length !== 1 ? 's' : '');
 
-            // Adjust polling rate based on active overrides
-            adjustPollingRate(activeOverrides);
+            var groups = groupsData.groups || [];
+
+            // Adjust polling rate based on active overrides and upcoming transitions
+            adjustPollingRate(activeOverrides, groups);
 
             // Schedule precise timers for override expiry
             scheduleExpiryTimers(activeOverrides);
+
+            // Schedule precise timers for upcoming scheduled transitions
+            scheduleTransitionTimers(groups);
 
             var syncEl = document.getElementById('last-sync');
             if (syncEl) {
@@ -797,10 +883,17 @@
                 App.toast(groupName + ': all games already ' + action + 'd.', 'info');
             }
 
-            await loadDashboard();
+            // Immediately update local game states from response for instant UI feedback
+            applyChangedGames(result.details);
+            renderStats(allGames);
+            renderStatusFilters(allGames);
+            renderGameView(allGames);
+
+            // Background refresh for full consistency (group controls, overrides, etc.)
+            setControlsLoading(false);
+            loadDashboard();
         } catch (err) {
             App.toast(verb + ' failed: ' + err.message, 'error');
-        } finally {
             setControlsLoading(false);
         }
     }
@@ -827,6 +920,9 @@
                     var result = await API.post('groups/' + g.id + '/' + action);
                     totalChanged += result.changed || 0;
                     totalErrors += result.errors || 0;
+
+                    // Update local game states after each group action
+                    applyChangedGames(result.details);
                 } catch (err) {
                     totalErrors++;
                 }
@@ -840,12 +936,41 @@
                 App.toast('All games already ' + action + 'd.', 'info');
             }
 
-            await loadDashboard();
+            // Immediately re-render with updated local state
+            renderStats(allGames);
+            renderStatusFilters(allGames);
+            renderGameView(allGames);
+
+            // Background refresh for full consistency
+            setControlsLoading(false);
+            loadDashboard();
         } catch (err) {
             App.toast('Bulk ' + action + ' failed: ' + err.message, 'error');
-        } finally {
             setControlsLoading(false);
         }
+    }
+
+    /**
+     * Apply changed game states from an action response to the local allGames
+     * array for instant UI feedback without waiting for a full dashboard reload.
+     */
+    function applyChangedGames(details) {
+        if (!details) return;
+        var changed = details.changed || [];
+        if (changed.length === 0) return;
+
+        // Build a lookup for quick matching
+        var changeMap = {};
+        changed.forEach(function(c) {
+            changeMap[c.game_id] = c.new_status;
+        });
+
+        // Update allGames in place
+        allGames.forEach(function(game) {
+            if (changeMap[game.game_id]) {
+                game.operation_status = changeMap[game.game_id];
+            }
+        });
     }
 
     function setControlsLoading(loading) {
@@ -886,9 +1011,17 @@
         if (!confirmed) return;
 
         try {
-            await API.post('groups/' + groupId + '/clear-manual-override');
+            var result = await API.post('groups/' + groupId + '/clear-manual-override');
             App.toast(groupName + ': resumed automatic scheduling.', 'success');
-            await loadDashboard();
+
+            // Apply any state changes from enforcement for instant UI feedback
+            applyChangedGames(result.enforced);
+            renderStats(allGames);
+            renderStatusFilters(allGames);
+            renderGameView(allGames);
+
+            // Background refresh for full consistency
+            loadDashboard();
         } catch (err) {
             App.toast('Failed to clear manual override: ' + err.message, 'error');
         }
