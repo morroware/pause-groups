@@ -131,7 +131,7 @@ pause-groups/
     scheduler.php          #   Scheduling engine (planning, execution, enforcement, purge)
 
   public/                  # Frontend assets
-    css/style.css          #   Stylesheet (dark theme)
+    css/style.css          #   Stylesheet (dark and light themes)
     js/
       api.js               #   HTTP client with CSRF header injection
       app.js               #   SPA router and navigation (hash-based)
@@ -242,7 +242,7 @@ Game and status data is refreshed from CenterEdge through multiple paths:
 4. **`GET /api/games` auto-primes cache** — runs a sync if the cache is empty.
 5. **State enforcement** — syncs before each enforcement cycle (with staleness check).
 
-The dashboard auto-refreshes every 60 seconds, reading the existing cache unless a sync path runs.
+The dashboard uses adaptive polling: 30 seconds by default, 10 seconds when an override is active, and 5 seconds when a transition or override expiry is imminent (< 2 minutes away). Override expiry and scheduled transitions trigger immediate enforcement and refresh.
 
 ### Concurrency Control
 
@@ -335,6 +335,14 @@ All endpoints return JSON. State-changing requests (POST, PUT, PATCH, DELETE) re
 | `/api/overrides` | GET | List overrides grouped as `active`, `upcoming`, and `expired` (last 30 days, max 50). Supports `?group_id=` filter. |
 | `/api/overrides` | POST | Create override. If active now, executes immediately. Triggers replan. Tracks creating user. |
 | `/api/overrides/{id}` | DELETE | Delete override. If it was active, immediately enforces the correct post-deletion state. |
+
+### Users
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/users` | GET | List all admin users (id, username, display name, active flag, timestamps). |
+| `/api/users` | POST | Create a new admin user (username, display name, password). |
+| `/api/users/{id}` | PUT | Update user (display name, password, active flag). |
 
 ### Logs
 
@@ -454,6 +462,8 @@ php -S localhost:8000
 
 Run the installer, configure CenterEdge API credentials through the Settings page, and trigger a game sync. The application uses hash-based routing (`#/dashboard`, `#/groups`, `#/schedules`, `#/overrides`, `#/logs`, `#/settings`).
 
-The frontend is a dark-themed SPA using the Inter font family. All JavaScript modules are loaded as plain `<script>` tags (no bundler). The `api.js` module handles all HTTP communication and automatically injects the CSRF token header.
+The frontend is a SPA with dark and light themes (toggled via a button in the navigation bar, persisted to localStorage) using the Inter font family. All JavaScript modules are loaded as plain `<script>` tags (no bundler). The `api.js` module handles all HTTP communication and automatically injects the CSRF token header.
+
+Manual pause/unpause actions use optimistic UI updates for instant visual feedback, skipping redundant API syncs.
 
 There is no automated test suite.
