@@ -52,9 +52,23 @@ class DB {
             name TEXT NOT NULL,
             description TEXT DEFAULT \'\',
             is_active INTEGER NOT NULL DEFAULT 1,
+            manual_override_action TEXT DEFAULT NULL,
+            manual_override_at TEXT DEFAULT NULL,
             created_at TEXT NOT NULL DEFAULT (datetime(\'now\')),
             updated_at TEXT NOT NULL DEFAULT (datetime(\'now\'))
         )');
+
+        // Migration: add manual override columns to existing databases
+        try {
+            $db->exec('ALTER TABLE pause_groups ADD COLUMN manual_override_action TEXT DEFAULT NULL');
+        } catch (Exception $e) {
+            // Column already exists — ignore
+        }
+        try {
+            $db->exec('ALTER TABLE pause_groups ADD COLUMN manual_override_at TEXT DEFAULT NULL');
+        } catch (Exception $e) {
+            // Column already exists — ignore
+        }
 
         $db->exec('CREATE TABLE IF NOT EXISTS pause_group_categories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

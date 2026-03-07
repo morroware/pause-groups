@@ -359,7 +359,22 @@ class Scheduler {
             $groupId = (int)$group['id'];
             $summary['groups_checked']++;
 
-            // Highest-priority rule: active override wins.
+            // Highest-priority rule: manual override wins.
+            // When an operator manually pauses/unpauses, that intent is
+            // respected until the next scheduled transition fires.
+            $manualOverride = DB::queryOne(
+                'SELECT manual_override_action FROM pause_groups
+                 WHERE id = :p0 AND manual_override_action IS NOT NULL',
+                [$groupId]
+            );
+
+            if ($manualOverride) {
+                // Manual override is active — skip enforcement for this group
+                $summary['results'][$groupId] = ['skipped_reason' => 'manual_override'];
+                continue;
+            }
+
+            // Second priority: active schedule override wins.
             $activeOverride = DB::queryOne(
                 'SELECT action FROM schedule_overrides
                  WHERE pause_group_id = :p0 AND start_datetime <= :p1 AND end_datetime > :p1
@@ -409,8 +424,12 @@ class Scheduler {
     /**
      * Enforce the desired state for a single group at the current time.
      * Used after override changes that require immediate state correction.
+     *
+     * When called from an override create/delete, the $clearManual flag
+     * indicates that any active manual override should be superseded by
+     * the new override intent.
      */
-    public static function enforceGroupState(int $groupId): array {
+    public static function enforceGroupState(int $groupId, bool $clearManual = true): array {
         $tz = DB::getConfig('timezone') ?? DEFAULT_TIMEZONE;
         date_default_timezone_set($tz);
 
@@ -419,7 +438,29 @@ class Scheduler {
         $nowStr = $now->format('Y-m-d H:i');
         $nowTime = $now->format('H:i');
 
-        // Highest-priority rule: active override wins.
+        // If called from override management, clear any manual override
+        // so the new override/schedule state takes effect.
+        if ($clearManual) {
+            self::clearManualOverride($groupId);
+        }
+
+        // Highest-priority rule: manual override wins (if still active).
+        $manualOverride = DB::queryOne(
+            'SELECT manual_override_action FROM pause_groups
+             WHERE id = :p0 AND manual_override_action IS NOT NULL',
+            [$groupId]
+        );
+
+        if ($manualOverride) {
+            $desiredAction = $manualOverride['manual_override_action'];
+            return self::executeStateChange(
+                $groupId,
+                $desiredAction === 'pause' ? 'paused' : 'enabled',
+                'manual'
+            );
+        }
+
+        // Second priority: active schedule override wins.
         $activeOverride = DB::queryOne(
             'SELECT action FROM schedule_overrides
              WHERE pause_group_id = :p0 AND start_datetime <= :p1 AND end_datetime > :p1
@@ -475,6 +516,11 @@ class Scheduler {
         $source = $action['source'];
         $desiredStatus = ($desiredAction === 'pause') ? 'paused' : 'enabled';
 
+        // A scheduled transition firing supersedes any manual override.
+        // The operator's manual action was a temporary hold; now the
+        // regular schedule takes over again.
+        self::clearManualOverride($groupId);
+
         $results = self::executeStateChange($groupId, $desiredStatus, $source);
 
         // Mark action as executed
@@ -492,7 +538,40 @@ class Scheduler {
      */
     public static function executeImmediate(int $groupId, string $action, string $source = 'manual'): array {
         $desiredStatus = ($action === 'pause') ? 'paused' : 'enabled';
-        return self::executeStateChange($groupId, $desiredStatus, $source);
+        $result = self::executeStateChange($groupId, $desiredStatus, $source);
+
+        // Record manual override so the watchdog and enforcement logic
+        // respect the operator's intent until the next scheduled transition.
+        if ($source === 'manual') {
+            self::setManualOverride($groupId, $action);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Set a manual override for a group.
+     * This takes highest priority: the watchdog and enforcement logic will
+     * respect it until a scheduled action fires or it is explicitly cleared.
+     */
+    public static function setManualOverride(int $groupId, string $action): void {
+        $tz = DB::getConfig('timezone') ?? DEFAULT_TIMEZONE;
+        date_default_timezone_set($tz);
+
+        DB::execute(
+            'UPDATE pause_groups SET manual_override_action = :p0, manual_override_at = :p1 WHERE id = :p2',
+            [$action, date('Y-m-d H:i:s'), $groupId]
+        );
+    }
+
+    /**
+     * Clear the manual override for a group (e.g. when a scheduled transition fires).
+     */
+    public static function clearManualOverride(int $groupId): void {
+        DB::execute(
+            'UPDATE pause_groups SET manual_override_action = NULL, manual_override_at = NULL WHERE id = :p0',
+            [$groupId]
+        );
     }
 
     /**
@@ -744,12 +823,17 @@ class Scheduler {
             $groupId = (int)$row['pause_group_id'];
             $summary['groups_checked']++;
 
-            // Check if group is active
+            // Check if group is active and whether manual override is set
             $group = DB::queryOne(
-                'SELECT id FROM pause_groups WHERE id = :p0 AND is_active = 1',
+                'SELECT id, manual_override_action FROM pause_groups WHERE id = :p0 AND is_active = 1',
                 [$groupId]
             );
             if (!$group) continue;
+
+            // If a manual override is active, skip — operator intent wins
+            if ($group['manual_override_action'] !== null) {
+                continue;
+            }
 
             // Determine desired state (same logic as enforceGroupState)
             $activeOverride = DB::queryOne(
