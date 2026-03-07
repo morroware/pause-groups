@@ -30,6 +30,12 @@ function handleGroups(string $method, array $parts, ?array $input): void {
         return;
     }
 
+    // Handle POST /api/groups/{id}/clear-manual-override
+    if ($method === 'POST' && $groupId && $action === 'clear-manual-override') {
+        clearManualOverrideAction($groupId);
+        return;
+    }
+
     switch ($method) {
         case 'GET':
             if ($groupId) {
@@ -148,6 +154,16 @@ function listGroups(): void {
             );
         }
         $group['active_override'] = $activeOverride ?: null;
+
+        // Manual override
+        $group['manual_override'] = null;
+        if ($group['manual_override_action']) {
+            $group['manual_override'] = [
+                'action' => $group['manual_override_action'],
+                'at'     => $group['manual_override_at'],
+            ];
+        }
+        unset($group['manual_override_action'], $group['manual_override_at']);
     }
     unset($group);
 
@@ -209,6 +225,31 @@ function enforceGroupAction(int $groupId): void {
         'skipped' => count($results['skipped'] ?? []),
         'errors'  => count($results['errors'] ?? []),
         'details' => $results,
+    ]);
+}
+
+/**
+ * Clear a manual override for a group and enforce the scheduled state.
+ */
+function clearManualOverrideAction(int $groupId): void {
+    $group = DB::queryOne('SELECT id, name FROM pause_groups WHERE id = :p0', [$groupId]);
+    if (!$group) {
+        http_response_code(404);
+        echo json_encode(['error' => 'Group not found']);
+        return;
+    }
+
+    require_once __DIR__ . '/../lib/centeredge_client.php';
+    require_once __DIR__ . '/../lib/scheduler.php';
+
+    Scheduler::clearManualOverride($groupId);
+    $results = Scheduler::enforceGroupState($groupId, false);
+
+    echo json_encode([
+        'success' => true,
+        'group_id' => $groupId,
+        'group_name' => $group['name'],
+        'enforced' => $results,
     ]);
 }
 

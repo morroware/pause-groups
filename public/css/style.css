@@ -324,6 +324,7 @@ body::before {
 .btn-ghost:hover:not(:disabled) { background: var(--bg-tertiary); color: var(--text-primary); }
 
 .btn-sm { padding: 0.3rem 0.65rem; font-size: 0.78rem; }
+.btn-xs { padding: 0.2rem 0.5rem; font-size: 0.72rem; }
 .btn-icon { padding: 0.4rem; }
 
 /* ============================================
@@ -582,6 +583,10 @@ body::before {
 .group-control-context-override {
     background: var(--accent-subtle);
     color: var(--accent);
+}
+.group-control-context-manual {
+    background: rgba(168, 85, 247, 0.12);
+    color: #c084fc;
 }
 .group-control-actions {
     display: flex; gap: 0.5rem; margin-top: 0.1rem;

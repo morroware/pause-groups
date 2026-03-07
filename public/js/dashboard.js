@@ -713,8 +713,22 @@
                 ]));
             }
 
-            // Context: active override or next scheduled transition
-            if (override) {
+            // Context: manual override, active override, or next scheduled transition
+            var manualOvr = group.manual_override;
+            if (manualOvr) {
+                var manualLabel = manualOvr.action === 'pause' ? 'Manually Paused' : 'Manually Unpaused';
+                card.appendChild(App.el('div', { className: 'group-control-context group-control-context-manual' }, [
+                    App.el('span', { textContent: '\u270B' }),
+                    App.el('span', { style: { fontWeight: '500' }, textContent: manualLabel }),
+                    App.el('span', { style: { opacity: '0.7' }, textContent: ' \u2022 since ' + App.formatDatetime(manualOvr.at) }),
+                    App.el('button', {
+                        className: 'btn btn-ghost btn-xs',
+                        textContent: 'Resume Schedule',
+                        style: { marginLeft: 'auto', fontSize: '0.72rem' },
+                        onClick: function() { clearManualOverride(group.id, group.name); }
+                    })
+                ]));
+            } else if (override) {
                 card.appendChild(App.el('div', { className: 'group-control-context group-control-context-override' }, [
                     App.el('span', { textContent: '\u26A1' }),
                     App.el('span', { style: { fontWeight: '500' }, textContent: override.name }),
@@ -865,6 +879,19 @@
             ]);
             el.appendChild(card);
         });
+    }
+
+    async function clearManualOverride(groupId, groupName) {
+        var confirmed = await App.confirm('Resume automatic schedule for "' + groupName + '"? The group will return to its scheduled state.');
+        if (!confirmed) return;
+
+        try {
+            await API.post('groups/' + groupId + '/clear-manual-override');
+            App.toast(groupName + ': resumed automatic scheduling.', 'success');
+            await loadDashboard();
+        } catch (err) {
+            App.toast('Failed to clear manual override: ' + err.message, 'error');
+        }
     }
 
     async function syncGames() {
