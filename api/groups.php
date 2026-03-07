@@ -117,6 +117,7 @@ function listGroups(): void {
             'paused' => $pausedCount,
             'out_of_service' => $oosCount,
         ];
+        $group['game_ids'] = array_values($gameIds);
 
         // Next scheduled transition today.
         // Schedule windows define active (unpaused) hours:

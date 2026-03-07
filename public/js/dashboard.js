@@ -23,6 +23,7 @@
 
     // Module-level state
     var allGames = [];
+    var allGroups = [];
     var refreshInterval = null;
     var expiryTimers = [];
     var transitionTimers = [];
@@ -316,10 +317,11 @@
             var groupsData = results[2];
 
             allGames = gamesData.games || [];
+            allGroups = groupsData.groups || [];
             var activeOverrides = overridesData.active || [];
 
             renderStats(allGames);
-            renderGroupControls(groupsData.groups || []);
+            renderGroupControls(allGroups);
             renderStatusFilters(allGames);
             renderGameView(allGames);
             renderActiveOverrides(activeOverrides);
@@ -328,7 +330,7 @@
             var badge = document.getElementById('game-count-badge');
             if (badge) badge.textContent = allGames.length + ' game' + (allGames.length !== 1 ? 's' : '');
 
-            var groups = groupsData.groups || [];
+            var groups = allGroups;
 
             // Adjust polling rate based on active overrides and upcoming transitions
             adjustPollingRate(activeOverrides, groups);
@@ -868,6 +870,13 @@
         var confirmed = await App.confirm(msg);
         if (!confirmed) return;
 
+        // Optimistic UI update: apply expected state change immediately
+        var desiredStatus = action === 'pause' ? 'paused' : 'enabled';
+        applyOptimisticGroupAction(groupId, desiredStatus);
+        renderStats(allGames);
+        renderGroupControls(allGroups);
+        renderStatusFilters(allGames);
+        renderGameView(allGames);
         setControlsLoading(true);
 
         try {
@@ -883,18 +892,20 @@
                 App.toast(groupName + ': all games already ' + action + 'd.', 'info');
             }
 
-            // Immediately update local game states from response for instant UI feedback
+            // Reconcile with actual server response
             applyChangedGames(result.details);
             renderStats(allGames);
             renderStatusFilters(allGames);
             renderGameView(allGames);
 
-            // Background refresh for full consistency (group controls, overrides, etc.)
+            // Background refresh for full consistency
             setControlsLoading(false);
             loadDashboard();
         } catch (err) {
             App.toast(verb + ' failed: ' + err.message, 'error');
+            // Revert optimistic update on failure
             setControlsLoading(false);
+            loadDashboard();
         }
     }
 
@@ -904,6 +915,19 @@
         var confirmed = await App.confirm(verb + ' all games across ' + count + ' group' + (count !== 1 ? 's' : '') + '?');
         if (!confirmed) return;
 
+        // Optimistic UI update: apply expected state to all targeted groups
+        var desiredStatus = action === 'pause' ? 'paused' : 'enabled';
+        for (var j = 0; j < groups.length; j++) {
+            var grp = groups[j];
+            if (grp.effective_state === 'empty') continue;
+            if (action === 'pause' && grp.effective_state === 'paused') continue;
+            if (action === 'unpause' && grp.effective_state === 'enabled') continue;
+            applyOptimisticGroupAction(grp.id, desiredStatus);
+        }
+        renderStats(allGames);
+        renderGroupControls(allGroups);
+        renderStatusFilters(allGames);
+        renderGameView(allGames);
         setControlsLoading(true);
 
         var totalChanged = 0;
@@ -921,7 +945,7 @@
                     totalChanged += result.changed || 0;
                     totalErrors += result.errors || 0;
 
-                    // Update local game states after each group action
+                    // Reconcile with actual response
                     applyChangedGames(result.details);
                 } catch (err) {
                     totalErrors++;
@@ -936,18 +960,62 @@
                 App.toast('All games already ' + action + 'd.', 'info');
             }
 
-            // Immediately re-render with updated local state
-            renderStats(allGames);
-            renderStatusFilters(allGames);
-            renderGameView(allGames);
-
             // Background refresh for full consistency
             setControlsLoading(false);
             loadDashboard();
         } catch (err) {
             App.toast('Bulk ' + action + ' failed: ' + err.message, 'error');
             setControlsLoading(false);
+            loadDashboard();
         }
+    }
+
+    /**
+     * Optimistic update: apply expected state change to all games in a group
+     * and update the group's local state, before the API call returns.
+     * Uses game_ids from the groups API to know which games belong to the group.
+     */
+    function applyOptimisticGroupAction(groupId, desiredStatus) {
+        // Find the group and its game IDs
+        var group = null;
+        for (var i = 0; i < allGroups.length; i++) {
+            if (allGroups[i].id == groupId) { group = allGroups[i]; break; }
+        }
+        if (!group || !group.game_ids) return;
+
+        // Build a set of game IDs in this group
+        var groupGameSet = {};
+        group.game_ids.forEach(function(id) { groupGameSet[id] = true; });
+
+        // Update allGames in place
+        var enabledCount = 0, pausedCount = 0, oosCount = 0;
+        allGames.forEach(function(game) {
+            if (groupGameSet[game.game_id]) {
+                // Only change non-outOfService games
+                if (game.operation_status !== 'outOfService') {
+                    game.operation_status = desiredStatus;
+                }
+                // Tally for group stats
+                if (game.operation_status === 'enabled') enabledCount++;
+                else if (game.operation_status === 'paused') pausedCount++;
+                else if (game.operation_status === 'outOfService') oosCount++;
+            }
+        });
+
+        // Update group's local state
+        var total = enabledCount + pausedCount + oosCount;
+        group.game_stats = {
+            total: total,
+            enabled: enabledCount,
+            paused: pausedCount,
+            out_of_service: oosCount
+        };
+        group.effective_state = total === 0 ? 'empty'
+            : (pausedCount > 0 && enabledCount === 0 ? 'paused'
+            : (enabledCount > 0 && pausedCount === 0 ? 'enabled' : 'mixed'));
+
+        // Mark as manually overridden
+        group.manual_override = { action: desiredStatus === 'paused' ? 'pause' : 'unpause', at: new Date().toISOString() };
     }
 
     /**
