@@ -67,8 +67,9 @@
             // Set precise timers for each override expiry
             var now = Date.now();
             activeOverrides.forEach(function(o) {
-                var endMs = new Date(o.end_datetime.replace(' ', 'T')).getTime();
-                var delay = endMs - now;
+                var endDate = App.toAppTzDate(o.end_datetime);
+                if (!endDate) return;
+                var delay = endDate.getTime() - now;
 
                 if (delay > 0 && delay < 3600000) {
                     var timer = setTimeout(function() {

@@ -36,7 +36,7 @@ function handleLogs(string $method, array $parts, ?array $input): void {
     }
 
     // Source filter
-    if (!empty($_GET['source']) && in_array($_GET['source'], ['cron', 'manual', 'override', 'schedule'])) {
+    if (!empty($_GET['source']) && in_array($_GET['source'], ['cron', 'manual', 'override', 'schedule', 'watchdog', 'expired_override'])) {
         $conditions[] = "l.source = :p$idx";
         $params[$idx] = $_GET['source'];
         $idx++;

@@ -560,12 +560,9 @@ class Scheduler {
      * respect it until a scheduled action fires or it is explicitly cleared.
      */
     public static function setManualOverride(int $groupId, string $action): void {
-        $tz = DB::getConfig('timezone') ?? DEFAULT_TIMEZONE;
-        date_default_timezone_set($tz);
-
         DB::execute(
-            'UPDATE pause_groups SET manual_override_action = :p0, manual_override_at = :p1 WHERE id = :p2',
-            [$action, date('Y-m-d H:i:s'), $groupId]
+            'UPDATE pause_groups SET manual_override_action = :p0, manual_override_at = datetime(\'now\') WHERE id = :p1',
+            [$action, $groupId]
         );
     }
 

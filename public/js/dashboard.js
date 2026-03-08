@@ -52,8 +52,9 @@
         if (activeOverrides && activeOverrides.length > 0) {
             var soonestMs = Infinity;
             activeOverrides.forEach(function(o) {
-                var endMs = new Date(o.end_datetime.replace(' ', 'T')).getTime();
-                var remaining = endMs - now;
+                var endDate = App.toAppTzDate(o.end_datetime);
+                if (!endDate) return;
+                var remaining = endDate.getTime() - now;
                 if (remaining < soonestMs) soonestMs = remaining;
             });
 
@@ -103,8 +104,9 @@
 
         var now = Date.now();
         activeOverrides.forEach(function(o) {
-            var endMs = new Date(o.end_datetime.replace(' ', 'T')).getTime();
-            var delay = endMs - now;
+            var endDate = App.toAppTzDate(o.end_datetime);
+            if (!endDate) return;
+            var delay = endDate.getTime() - now;
 
             if (delay > 0 && delay < 3600000) {
                 // Fire right at expiry: call enforce endpoint then refresh

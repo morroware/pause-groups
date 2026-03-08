@@ -197,12 +197,14 @@ function deleteOverride(int $overrideId): void {
     triggerReplan();
 
     // If the override was active, immediately enforce the correct state
-    // so games don't stay in the override's state until the watchdog runs
+    // so games don't stay in the override's state until the watchdog runs.
+    // Pass clearManual=false so that an existing manual override is preserved;
+    // deleting a schedule override should not silently discard operator intent.
     if ($wasActive) {
         if (file_exists(__DIR__ . '/../lib/scheduler.php')) {
             require_once __DIR__ . '/../lib/scheduler.php';
             try {
-                Scheduler::enforceGroupState($groupId);
+                Scheduler::enforceGroupState($groupId, false);
             } catch (Exception $e) {
                 error_log('State enforcement after override delete failed: ' . $e->getMessage());
             }

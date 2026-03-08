@@ -152,12 +152,6 @@ const App = {
         document.body.classList.toggle('app-guest', !this.currentUser);
     },
 
-
-    setAppStateClass() {
-        document.body.classList.toggle('app-authenticated', !!this.currentUser);
-        document.body.classList.toggle('app-guest', !this.currentUser);
-    },
-
     matchRoute(pattern, hash) {
         // Convert #/groups/:id to regex
         const parts = pattern.split('/');
@@ -365,6 +359,44 @@ const App = {
         return Number.isNaN(d.getTime()) ? null : d;
     },
 
+    /**
+     * Parse a datetime string that is in the app's configured timezone
+     * (e.g. override datetimes, manual_override_at) into a proper Date.
+     * Unlike toUtcDate which assumes UTC, this accounts for the app timezone
+     * offset so timers and relative time calculations are correct even when
+     * the browser is in a different timezone than the app.
+     */
+    toAppTzDate(dateStr) {
+        if (!dateStr) return null;
+        if (dateStr instanceof Date) return dateStr;
+        const normalized = String(dateStr).trim().replace(' ', 'T');
+        if (!normalized) return null;
+
+        // Parse as if UTC to get a reference point
+        const asUtc = new Date(normalized + 'Z');
+        if (Number.isNaN(asUtc.getTime())) return null;
+
+        // Use Intl to find what the app timezone clock reads at that UTC instant
+        const fmt = new Intl.DateTimeFormat('en-US', {
+            timeZone: this.appTimezone,
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+            hour12: false
+        });
+        const parts = fmt.formatToParts(asUtc);
+        const p = (type) => (parts.find(x => x.type === type) || {}).value || '00';
+        const formatted = p('year') + '-' + p('month') + '-' + p('day') +
+                          'T' + p('hour') + ':' + p('minute') + ':' + p('second') + 'Z';
+        const appTzAtUtc = new Date(formatted);
+
+        // offset = how far ahead the app timezone is from UTC
+        const offsetMs = appTzAtUtc.getTime() - asUtc.getTime();
+
+        // The input string represents a wall-clock time in the app timezone.
+        // To get the true UTC instant: subtract the offset from the parsed-as-UTC value.
+        return new Date(asUtc.getTime() - offsetMs);
+    },
+
     formatDate(dateStr) {
         if (!dateStr) return '-';
         const d = this.toUtcDate(dateStr);
@@ -395,7 +427,8 @@ const App = {
     formatRelative(dateStr) {
         if (!dateStr) return '';
         const now = new Date();
-        const d = this.toUtcDate(dateStr);
+        // Override datetimes are in app timezone, not UTC
+        const d = this.toAppTzDate(dateStr);
         if (!d) return '';
         const diffMs = d - now;
         const diffMin = Math.round(diffMs / 60000);
