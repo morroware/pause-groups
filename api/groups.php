@@ -71,7 +71,7 @@ function handleGroups(string $method, array $parts, ?array $input): void {
 
 function listGroups(): void {
     $groups = DB::query(
-        'SELECT g.id, g.name, g.description, g.is_active, g.created_at, g.updated_at,
+        'SELECT g.id, g.name, g.description, g.is_active, g.manual_override_action, g.manual_override_at, g.created_at, g.updated_at,
                 (SELECT COUNT(*) FROM pause_group_categories WHERE pause_group_id = g.id) as category_count,
                 (SELECT COUNT(*) FROM pause_group_games WHERE pause_group_id = g.id) as game_count,
                 (SELECT COUNT(*) FROM schedules WHERE pause_group_id = g.id AND is_active = 1) as schedule_count
