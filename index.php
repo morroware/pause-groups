@@ -51,6 +51,14 @@ header(
 // API Routes
 // ---------------------------------------------------
 if ($path === 'api' || strpos($path, 'api/') === 0) {
+    // Prevent PHP warnings/notices from corrupting JSON output.
+    // On PHP 8.x (Fedora default), display_errors is often enabled and
+    // undefined-key warnings, deprecation notices, etc. would be printed
+    // before the JSON body, breaking frontend parsing. Errors are still
+    // logged to the PHP error log via log_errors.
+    ini_set('display_errors', '0');
+    ini_set('log_errors', '1');
+
     header('Content-Type: application/json; charset=utf-8');
 
     // Safety net — two tiers, only for authenticated sessions.
@@ -180,6 +188,7 @@ if ($path === 'api' || strpos($path, 'api/') === 0) {
         }
         error_log('Unhandled exception: ' . $msg . "\n" . $e->getTraceAsString());
     }
+
     exit;
 }
 
