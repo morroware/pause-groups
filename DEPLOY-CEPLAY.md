@@ -9,6 +9,20 @@ This runbook is for your exact scenario:
 
 > Keep your existing `server {}` blocks. Do **not** replace them. Add only the `location` blocks shown below.
 
+## If you are already mid-migration and need recovery now
+
+Use this fast rescue sequence to get back to a good state **without breaking existing sites**:
+
+1. In `/var/persist/nginx.conf`, temporarily remove/comment only the `ceplay` `listen 443 ssl` server block if it references cert files that do not exist yet.
+2. Keep the existing Grafana/Claw/default vhosts unchanged.
+3. Keep a `ceplay` port-80 block with `/.well-known/acme-challenge/` mapped to `/var/www/html`.
+4. Run `nginx -t` and reload.
+5. Run Certbot for `ceplay.thecastlefuncenter.com`.
+6. Confirm cert files exist under `/etc/letsencrypt/live/ceplay.thecastlefuncenter.com/` inside the Nginx container.
+7. Re-add the ceplay HTTPS block and run `nginx -t` + reload again.
+
+If `nginx -t` fails at any step, stop and fix before reloading.
+
 ## 1) Install app files and PHP-FPM service
 
 Follow `INSTALL-FCOS.md` through setup script execution, but **do not** add the generated standalone `server {}` block.
@@ -125,25 +139,89 @@ Check propagation:
 dig +short ceplay.thecastlefuncenter.com A
 ```
 
-## 6) TLS certificate for subdomain
+## 6) TLS certificate for subdomain (safe order of operations)
 
-Because this FCOS setup stores certs under `/var/persist/letsencrypt`, issue/renew a certificate that includes `ceplay.thecastlefuncenter.com` and point your Nginx TLS server block at those cert files.
+Use this exact order to avoid downtime:
 
-Typical HTTPS server block pattern (adjust paths to your current cert layout):
+1. Keep `ceplay` on HTTP first (with an ACME challenge location).
+2. Issue the certificate.
+3. Add the HTTPS `server {}` block that references the new cert files.
+4. Test and reload.
+
+Do **not** add a `ssl_certificate /etc/letsencrypt/live/ceplay...` reference until those files exist, or `nginx -t` will fail.
+
+### 6.1 HTTP block for ACME challenge
+
+```nginx
+server {
+    listen 80;
+    server_name ceplay.thecastlefuncenter.com;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/html;
+        default_type "text/plain";
+        try_files $uri =404;
+        allow all;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+```
+
+This explicit ACME location prevents challenge requests from being blocked by stricter regex locations (for example `location ~ /\.` deny rules).
+
+### 6.2 Issue cert for `ceplay.thecastlefuncenter.com`
+
+```bash
+sudo /usr/bin/podman run -it --rm \
+  -v /var/persist/letsencrypt:/etc/letsencrypt:z \
+  -v /var/persist/webroot:/var/www/html:z \
+  docker.io/certbot/certbot:latest certonly \
+  --webroot --webroot-path /var/www/html \
+  -v -d ceplay.thecastlefuncenter.com
+```
+
+Confirm files now exist:
+
+```bash
+sudo podman exec systemd-nginx sh -lc 'ls -l /etc/letsencrypt/live/ceplay.thecastlefuncenter.com'
+```
+
+### 6.3 Add HTTPS server block after cert exists
 
 ```nginx
 server {
     listen 443 ssl;
+    http2 on;
     server_name ceplay.thecastlefuncenter.com;
 
-    ssl_certificate     /var/persist/letsencrypt/live/ceplay.thecastlefuncenter.com/fullchain.pem;
-    ssl_certificate_key /var/persist/letsencrypt/live/ceplay.thecastlefuncenter.com/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/ceplay.thecastlefuncenter.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/ceplay.thecastlefuncenter.com/privkey.pem;
 
     # same /ceplay location blocks as above, or host directly at /
 }
 ```
 
-If your current Nginx container already terminates TLS for other sites, follow the same certificate automation method already in use there (do not introduce a second competing ACME flow).
+If your current Nginx container already terminates TLS for other sites, keep using the same certificate automation flow already in place (do not introduce a competing ACME method).
+
+Then always test/reload:
+
+```bash
+sudo podman exec systemd-nginx nginx -t
+sudo podman exec systemd-nginx nginx -s reload
+```
+
+### 6.4 Fast diagnosis for common failures
+
+- `cannot load certificate "/etc/letsencrypt/live/ceplay.../fullchain.pem"`
+  - Cause: HTTPS block added before cert exists.
+  - Fix: remove/comment ceplay 443 block, issue cert, then re-add block.
+
+- `Certbot ... Invalid response ... 403` for `/.well-known/acme-challenge/...`
+  - Cause: ACME path blocked by Nginx location rules.
+  - Fix: ensure the `location ^~ /.well-known/acme-challenge/ { ... }` block above is present in the `ceplay` port-80 server.
 
 ## 7) Rollback plan (fast)
 

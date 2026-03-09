@@ -274,19 +274,25 @@ This opens the config file in the `nano` text editor.
 Press `Ctrl+End` to jump to the end of the file.
 
 You're looking for the **last** closing `}` that belongs to a `server { }` block.
-The new block goes **after** that closing brace, at the very end of the file.
+The new block goes **inside** the existing `http { ... }` block, right before that `http` block's final closing `}`.
 
 It should look something like this when you're done:
 
 ```nginx
-    # ... existing server block for other sites ...
-}
+http {
+    # ... existing config ...
 
-# pause-groups — PHP arcade game scheduling app
-server {
-    listen 80;
-    server_name _;
-    ...
+    # ... existing server block for other sites ...
+    server {
+        ...
+    }
+
+    # pause-groups — PHP arcade game scheduling app
+    server {
+        listen 80;
+        server_name _;
+        ...
+    }
 }
 ```
 
@@ -301,7 +307,7 @@ cat /var/persist/pause-groups-nginx.conf.snippet
 ```
 
 Then switch back to the first session (where `nano` is open) and type/paste the
-block after the last `}`.
+block just before the final closing `}` of the `http` block.
 
 > **Tip:** If your SSH client supports it (PuTTY, Windows Terminal, etc.), you can
 > right-click to paste copied text into the terminal.
@@ -579,6 +585,18 @@ Read any errors, fix the config, test again, then reload:
 
 ```bash
 sudo nano /var/persist/nginx.conf
+sudo podman exec systemd-nginx nginx -t
+sudo podman exec systemd-nginx nginx -s reload
+```
+
+### Nginx says `"server" directive is not allowed here`
+
+This means the pause-groups `server { ... }` block was pasted **outside** the `http { ... }` block.
+Move the entire pause-groups server block so it is **inside** `http { ... }`, just before that block's final `}`.
+
+Then test and reload again:
+
+```bash
 sudo podman exec systemd-nginx nginx -t
 sudo podman exec systemd-nginx nginx -s reload
 ```
