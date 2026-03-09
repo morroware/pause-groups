@@ -312,9 +312,9 @@
                 API.get('overrides'),
                 API.get('groups')
             ]);
-            var gamesData = results[0];
-            var overridesData = results[1];
-            var groupsData = results[2];
+            var gamesData = results[0] || {};
+            var overridesData = results[1] || {};
+            var groupsData = results[2] || {};
 
             allGames = gamesData.games || [];
             allGroups = groupsData.groups || [];
@@ -880,7 +880,7 @@
         setControlsLoading(true);
 
         try {
-            var result = await API.post('groups/' + groupId + '/' + action);
+            var result = await API.post('groups/' + groupId + '/' + action) || {};
             var changed = result.changed || 0;
             var errors = result.errors || 0;
 
@@ -941,7 +941,7 @@
                 if (action === 'unpause' && g.effective_state === 'enabled') continue;
 
                 try {
-                    var result = await API.post('groups/' + g.id + '/' + action);
+                    var result = await API.post('groups/' + g.id + '/' + action) || {};
                     totalChanged += result.changed || 0;
                     totalErrors += result.errors || 0;
 
@@ -1079,7 +1079,7 @@
         if (!confirmed) return;
 
         try {
-            var result = await API.post('groups/' + groupId + '/clear-manual-override');
+            var result = await API.post('groups/' + groupId + '/clear-manual-override') || {};
             App.toast(groupName + ': resumed automatic scheduling.', 'success');
 
             // Apply any state changes from enforcement for instant UI feedback

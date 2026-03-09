@@ -38,7 +38,7 @@
         if (!content) return;
 
         try {
-            var data = await API.get('overrides');
+            var data = await API.get('overrides') || {};
             content.innerHTML = '';
             var active = data.active || [];
             renderSection(content, 'Active Now', active, 'badge-active');
@@ -124,7 +124,7 @@
 
     async function showCreateForm() {
         try {
-            var groupData = await API.get('groups');
+            var groupData = await API.get('groups') || {};
             var groups = groupData.groups || [];
 
             if (groups.length === 0) {
