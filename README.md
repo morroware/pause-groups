@@ -27,6 +27,11 @@ Designed to run across common environments:
 
 `at` improves execution precision to the exact scheduled minute. Without it, actions fire within 60 seconds via the watchdog cron or on the next API request via the built-in safety net.
 
+## Deployment Guides
+
+- `INSTALL-FCOS.md` — full Fedora CoreOS installation walkthrough.
+- `DEPLOY-CEPLAY.md` — coexistence runbook for hosting pause-groups at `/ceplay` alongside an existing Grafana/reverse-proxy setup, plus DNS/TLS steps for `ceplay.thecastlefuncenter.com`.
+
 ## Installation
 
 ### Option 1: Interactive Installer (recommended)
