@@ -34,8 +34,8 @@
                 API.get('schedules'),
                 API.get('groups')
             ]);
-            renderGrid(schedData.schedules || []);
-            renderList(schedData.schedules || [], groupData.groups || []);
+            renderGrid((schedData || {}).schedules || []);
+            renderList((schedData || {}).schedules || [], (groupData || {}).groups || []);
         } catch (err) {
             App.toast(err.message, 'error');
         }
@@ -120,7 +120,7 @@
 
     async function showCreateForm() {
         try {
-            const groupData = await API.get('groups');
+            const groupData = await API.get('groups') || {};
             const groups = groupData.groups || [];
 
             if (groups.length === 0) {

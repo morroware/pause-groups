@@ -22,7 +22,7 @@
         container.appendChild(listEl);
 
         try {
-            const data = await API.get('groups');
+            const data = await API.get('groups') || {};
             listEl.innerHTML = '';
             const groups = data.groups || [];
 
@@ -117,8 +117,8 @@
             if (isEdit) promises.push(API.get('groups/' + groupId));
             const results = await Promise.all(promises);
 
-            const allGames = results[0].games || [];
-            const allCategories = results[1].categories || [];
+            const allGames = (results[0] || {}).games || [];
+            const allCategories = (results[1] || {}).categories || [];
             const existing = isEdit ? results[2] : null;
 
             formWrap.innerHTML = '';
@@ -401,7 +401,7 @@
         listEl.querySelectorAll('.btn-success, .btn-warning').forEach(b => { b.disabled = true; });
 
         try {
-            const result = await API.post('groups/' + groupId + '/' + action);
+            const result = await API.post('groups/' + groupId + '/' + action) || {};
             const changed = result.changed || 0;
             const errors = result.errors || 0;
 
@@ -414,7 +414,7 @@
             }
 
             // Reload group list to reflect new state
-            const data = await API.get('groups');
+            const data = await API.get('groups') || {};
             listEl.innerHTML = '';
             const groups = data.groups || [];
             groups.forEach(group => {

@@ -116,7 +116,7 @@
             if (filters.action) params.set('action', filters.action);
             if (filters.success !== undefined) params.set('success', filters.success);
 
-            const data = await API.get('logs?' + params.toString());
+            const data = await API.get('logs?' + params.toString()) || {};
             content.innerHTML = '';
 
             if (!data.logs || data.logs.length === 0) {

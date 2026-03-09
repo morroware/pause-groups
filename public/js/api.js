@@ -42,6 +42,12 @@ const API = {
             try { data = JSON.parse(text); } catch (e) { data = null; }
         }
 
+        // Ensure successful responses never return null so callers
+        // can safely access properties like data.groups without crashing.
+        if (data === null && response.ok) {
+            data = {};
+        }
+
         if (response.status === 401) {
             // Don't redirect if we're already on the login page (this is a login attempt)
             const isLoginRequest = path === 'auth/login';

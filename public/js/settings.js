@@ -28,14 +28,17 @@
 
             content.innerHTML = '';
 
+            var settings = settingsData || {};
+            var users = usersData || {};
+
             // API Configuration section
-            content.appendChild(buildApiConfigSection(settingsData));
+            content.appendChild(buildApiConfigSection(settings));
 
             // Timezone section
-            content.appendChild(buildTimezoneSection(settingsData));
+            content.appendChild(buildTimezoneSection(settings));
 
             // Admin Users section
-            content.appendChild(buildUsersSection(usersData.users || []));
+            content.appendChild(buildUsersSection(users.users || []));
 
         } catch (err) {
             content.innerHTML = '';
@@ -106,7 +109,7 @@
                 try {
                     // Save first, then test
                     await saveApiConfig(baseUrlInput, usernameInput, passwordInput, apiKeyInput);
-                    const result = await API.post('settings/test', {});
+                    const result = await API.post('settings/test', {}) || {};
                     if (result.success) {
                         testResult.textContent = '\u2713 Connected to ' + (result.system_name || 'CenterEdge') +
                             '. Found ' + (result.game_count || 0) + ' games, ' + (result.category_count || 0) + ' categories.' +

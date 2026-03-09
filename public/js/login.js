@@ -56,7 +56,7 @@
             errorBox.classList.add('hidden');
 
             try {
-                const result = await API.post('auth/login', { username, password });
+                const result = await API.post('auth/login', { username, password }) || {};
                 App.currentUser = result.user;
                 if (result.csrf_token) {
                     API.setCsrfToken(result.csrf_token);
