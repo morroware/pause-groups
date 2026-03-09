@@ -31,5 +31,7 @@ RewriteRule ^(.*)$ index.php [QSA,L]
 </Files>
 
 <Files "install.php">
-    # Allow access during setup, recommend removing after install
+    # Blocked after initial setup. To run the installer, temporarily comment
+    # out the line below, complete setup, then restore it immediately.
+    Require all denied
 </Files>

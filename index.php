@@ -30,6 +30,22 @@ $method = $_SERVER['REQUEST_METHOD'];
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Referrer-Policy: strict-origin-when-cross-origin');
+header('X-Permitted-Cross-Domain-Policies: none');
+header('Permissions-Policy: geolocation=(), camera=(), microphone=()');
+// Content-Security-Policy: restrict sources; unsafe-inline required for the
+// inline APP_CONFIG <script> block injected by the SPA shell.
+header(
+    "Content-Security-Policy: " .
+    "default-src 'self'; " .
+    "script-src 'self' 'unsafe-inline'; " .
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " .
+    "font-src 'self' https://fonts.gstatic.com; " .
+    "img-src 'self' data:; " .
+    "connect-src 'self'; " .
+    "frame-ancestors 'none'; " .
+    "base-uri 'self'; " .
+    "form-action 'self';"
+);
 
 // ---------------------------------------------------
 // API Routes
@@ -37,38 +53,41 @@ header('Referrer-Policy: strict-origin-when-cross-origin');
 if ($path === 'api' || strpos($path, 'api/') === 0) {
     header('Content-Type: application/json; charset=utf-8');
 
-    // Safety net — two tiers:
+    // Safety net — two tiers, only for authenticated sessions.
+    // Running the scheduler against an unauthenticated request would
+    // trigger CenterEdge API calls on every probe/bot hit, which is
+    // wasteful and a potential DoS vector.
     //
-    // Tier 1 (every API call): Fast, DB-only check for recently-expired
-    // overrides whose state hasn't been corrected yet.  This is the primary
-    // mechanism that ensures override END transitions fire promptly even
-    // when at-jobs and the cron watchdog are unavailable.
+    // Tier 1 (every authenticated API call): Fast, DB-only check for
+    // recently-expired overrides whose state hasn't been corrected yet.
     //
     // Tier 2 (throttled, every 15s): Full missed-action execution and
     // live state enforcement including a CenterEdge cache sync.
-    require_once __DIR__ . '/lib/centeredge_client.php';
-    require_once __DIR__ . '/lib/scheduler.php';
+    if (Auth::check()) {
+        require_once __DIR__ . '/lib/centeredge_client.php';
+        require_once __DIR__ . '/lib/scheduler.php';
 
-    // Tier 1: targeted expired-override enforcement (fast — cache-only unless change needed)
-    try {
-        Scheduler::enforceExpiredOverrides(300);
-    } catch (Exception $e) {
-        error_log('Expired-override enforcement failed: ' . $e->getMessage());
-    }
-
-    // Tier 2: full enforcement (throttled to avoid hammering CenterEdge)
-    $missedCheckFile = __DIR__ . '/data/.last_missed_check';
-    if (!file_exists($missedCheckFile) || (time() - filemtime($missedCheckFile)) >= 15) {
-        @touch($missedCheckFile);
+        // Tier 1: targeted expired-override enforcement (fast — cache-only unless change needed)
         try {
-            Scheduler::executeMissedActions();
+            Scheduler::enforceExpiredOverrides(300);
         } catch (Exception $e) {
-            error_log('Missed-action check failed: ' . $e->getMessage());
+            error_log('Expired-override enforcement failed: ' . $e->getMessage());
         }
-        try {
-            Scheduler::enforceCurrentStates();
-        } catch (Exception $e) {
-            error_log('State enforcement failed: ' . $e->getMessage());
+
+        // Tier 2: full enforcement (throttled to avoid hammering CenterEdge)
+        $missedCheckFile = __DIR__ . '/data/.last_missed_check';
+        if (!file_exists($missedCheckFile) || (time() - filemtime($missedCheckFile)) >= 15) {
+            @touch($missedCheckFile);
+            try {
+                Scheduler::executeMissedActions();
+            } catch (Exception $e) {
+                error_log('Missed-action check failed: ' . $e->getMessage());
+            }
+            try {
+                Scheduler::enforceCurrentStates();
+            } catch (Exception $e) {
+                error_log('State enforcement failed: ' . $e->getMessage());
+            }
         }
     }
 

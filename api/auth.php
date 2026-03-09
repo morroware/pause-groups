@@ -18,16 +18,27 @@ function handleAuth(string $method, array $parts, ?array $input): void {
                 echo json_encode(['error' => 'Method not allowed']);
                 return;
             }
+
+            // Rate-limit check before touching credentials
+            $clientIp = $_SERVER['REMOTE_ADDR'] ?? '';
+            if (Auth::isRateLimited($clientIp)) {
+                http_response_code(429);
+                echo json_encode(['error' => 'Too many failed login attempts. Please wait 15 minutes before trying again.']);
+                return;
+            }
+
             $username = Validator::requireString($input ?? [], 'username');
             $password = Validator::requireString($input ?? [], 'password');
 
             $user = Auth::login($username, $password);
             if ($user) {
+                Auth::clearLoginAttempts($clientIp);
                 echo json_encode([
                     'user'       => $user,
                     'csrf_token' => CSRF::getToken(),
                 ]);
             } else {
+                Auth::recordFailedAttempt($clientIp);
                 http_response_code(401);
                 echo json_encode(['error' => 'Invalid username or password.']);
             }
