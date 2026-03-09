@@ -157,6 +157,14 @@ class DB {
             categories TEXT DEFAULT \'[]\',
             last_synced_at TEXT NOT NULL DEFAULT (datetime(\'now\'))
         )');
+
+        $db->exec('CREATE TABLE IF NOT EXISTS login_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip_address TEXT NOT NULL,
+            attempted_at TEXT NOT NULL DEFAULT (datetime(\'now\'))
+        )');
+        $db->exec('CREATE INDEX IF NOT EXISTS idx_attempts_ip ON login_attempts(ip_address)');
+        $db->exec('CREATE INDEX IF NOT EXISTS idx_attempts_time ON login_attempts(attempted_at)');
     }
 
     /**

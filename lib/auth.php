@@ -8,6 +8,11 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/csrf.php';
 
 class Auth {
+    /** Max failed login attempts allowed per IP within the rate-limit window. */
+    private const RATE_LIMIT_MAX_TRIES = 10;
+    /** Sliding window in seconds for counting failed attempts (15 minutes). */
+    private const RATE_LIMIT_WINDOW = 900;
+
     /**
      * Configure and start the session with secure settings.
      */
@@ -145,5 +150,44 @@ class Auth {
      */
     public static function hashPassword(string $password): string {
         return password_hash($password, PASSWORD_BCRYPT);
+    }
+
+    /**
+     * Return true if this IP has exceeded the failed-login threshold.
+     */
+    public static function isRateLimited(string $ip): bool {
+        if ($ip === '') {
+            return false;
+        }
+        $cutoff = date('Y-m-d H:i:s', time() - self::RATE_LIMIT_WINDOW);
+        $row = DB::queryOne(
+            'SELECT COUNT(*) AS cnt FROM login_attempts WHERE ip_address = :p0 AND attempted_at > :p1',
+            [$ip, $cutoff]
+        );
+        return (int)($row['cnt'] ?? 0) >= self::RATE_LIMIT_MAX_TRIES;
+    }
+
+    /**
+     * Record a failed login attempt for the given IP.
+     * Also prunes records older than 24 hours to keep the table small.
+     */
+    public static function recordFailedAttempt(string $ip): void {
+        if ($ip === '') {
+            return;
+        }
+        DB::execute('INSERT INTO login_attempts (ip_address) VALUES (:p0)', [$ip]);
+        // Opportunistic cleanup — remove entries older than 24 hours
+        $cutoff = date('Y-m-d H:i:s', time() - 86400);
+        DB::execute('DELETE FROM login_attempts WHERE attempted_at < :p0', [$cutoff]);
+    }
+
+    /**
+     * Clear all failed-login records for this IP (call on successful login).
+     */
+    public static function clearLoginAttempts(string $ip): void {
+        if ($ip === '') {
+            return;
+        }
+        DB::execute('DELETE FROM login_attempts WHERE ip_address = :p0', [$ip]);
     }
 }
